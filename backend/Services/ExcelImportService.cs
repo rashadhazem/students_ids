@@ -371,24 +371,24 @@ namespace BuaStudentApi.Services
             // Pharmacy: distinguish PharmD vs PharmD Clinical via section or college
             if (normRaw.Contains("pharm") || normRaw.Contains("صيدل"))
             {
-                if (normSec.Contains("clinic") || normSec.Contains("اكلينيك") || normRaw.Contains("clinic"))
+                if (normSec.Contains("clinic") || normSec.Contains("اكلينيك") || normSec.Contains("إكلينيك") || normRaw.Contains("clinic") || normRaw.Contains("اكلينيك") || normRaw.Contains("إكلينيك"))
                     return "كلية صيدلة اكلينيكية";
                 return "كلية الصيدلة فارما D";
             }
 
-            // Health Sciences vs Applied Arts
+            // Health Sciences vs Applied Arts vs Fine Arts
             if (normRaw.Contains("health") || normRaw.Contains("صحي")) return "كلية العلوم الصحية التطبيقية";
             if (normRaw.Contains("applied arts") || normRaw.Contains("فنون تطبيقية")) return "كلية الفنون التطبيقية";
-            if (normRaw.Contains("fine arts") || normRaw.Contains("فنون جميلة") || normRaw.Contains("فنون")) return "كلية الفنون الجميلة";
-            if (normRaw.Contains("اسنان") || normRaw.Contains("dent") || normRaw.Contains("oral")) return "كلية طب الأسنان";
-            if (normRaw.Contains("علاج") || normRaw.Contains("physio") || normRaw.Contains("physical")) return "كلية العلاج الطبيعي";
+            if (normRaw.Contains("fine arts") || normRaw.Contains("فنون جميلة") || (normRaw.Contains("فنون") && !normRaw.Contains("تطبيق"))) return "كلية الفنون الجميلة";
+            if (normRaw.Contains("اسنان") || normRaw.Contains("أسنان") || normRaw.Contains("dent") || normRaw.Contains("oral")) return "كلية طب الأسنان";
+            if (normRaw.Contains("علاج") || normRaw.Contains("طبيعي") || normRaw.Contains("physio") || normRaw.Contains("physical")) return "كلية العلاج الطبيعي";
             if (normRaw.Contains("بيطر") || normRaw.Contains("vet")) return "كلية الطب البيطري";
             if (normRaw.Contains("حيو") || normRaw.Contains("bio")) return "كلية تكنلوجيا علوم حيوية";
             if (normRaw.Contains("تمريض") || normRaw.Contains("nurs")) return "كلية التمريض";
             if (normRaw.Contains("ذكاء") || normRaw.Contains("بيانات") || normRaw.Contains("حاسب") || normRaw.Contains("ai") || normRaw.Contains("data") || normRaw.Contains("artificial")) return "كلية  ذكاء اصطناعي وعلوم البيانات";
-            if (normRaw.Contains("بزنس") || normRaw.Contains("اداره") || normRaw.Contains("تجاره") || normRaw.Contains("business") || normRaw.Contains("financial") || normRaw.Contains("economic")) return "كلية بزنس وإدارة الأعمال";
-            if (normRaw.Contains("لغات") || normRaw.Contains("ترجم") || normRaw.Contains("lang") || normRaw.Contains("translation")) return "كلية لغات وترجمة";
-            if (normRaw.Contains("حقوق") || normRaw.Contains("law")) return "كلية الحقوق";
+            if (normRaw.Contains("بزنس") || normRaw.Contains("اداره") || normRaw.Contains("إدارة") || normRaw.Contains("تجاره") || normRaw.Contains("business") || normRaw.Contains("financial") || normRaw.Contains("economic")) return "كلية بزنس وإدارة الأعمال";
+            if (normRaw.Contains("لغات") || normRaw.Contains("ترجم") || normRaw.Contains("ترجمة") || normRaw.Contains("lang") || normRaw.Contains("translation")) return "كلية لغات وترجمة";
+            if (normRaw.Contains("حقوق") || normRaw.Contains("قانون") || normRaw.Contains("law")) return "كلية الحقوق";
 
             foreach (var col in Colleges)
             {

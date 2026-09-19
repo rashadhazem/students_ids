@@ -1,16 +1,6 @@
 import React, { useState } from 'react';
 import { API_BASE_URL } from '../api/client';
-
-const COLLEGES = [
-  'كلية الهندسة والتكنولوجيا',
-  'كلية الصيدلة وتصنيع الدواء',
-  'كلية طب الفم والأسنان',
-  'كلية العلاج الطبيعي',
-  'كلية التمريض',
-  'كلية تكنولوجيا العلوم الصحية التطبيقية',
-  'كلية الإدارة والعلوم المالية والاقتصادية',
-  'كلية الفنون التطبيقية'
-];
+import { BUA_COLLEGES } from './RegisterStudentPage';
 
 export const ExportPage: React.FC = () => {
   const [selectedCollege, setSelectedCollege] = useState('');
@@ -83,7 +73,7 @@ export const ExportPage: React.FC = () => {
               className="bua-select text-xs"
             >
               <option value="">جميع الكليات</option>
-              {COLLEGES.map((c) => (
+              {BUA_COLLEGES.map((c) => (
                 <option key={c} value={c}>{c}</option>
               ))}
             </select>

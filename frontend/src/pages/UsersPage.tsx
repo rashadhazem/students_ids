@@ -1,22 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
 import { apiClient } from '../api/client';
-
-const COLLEGES = [
-  'كلية الطب البشري',
-  'كلية طب الفم والأسنان',
-  'كلية العلاج الطبيعي',
-  'كلية الصيدلة فارما D',
-  'كلية صيدلة اكلينيكية',
-  'كلية التمريض',
-  'كلية تكنولوجيا العلوم الصحية التطبيقية',
-  'كلية الهندسة والتكنولوجيا',
-  'كلية الذكاء الاصطناعي وإدارة البيانات',
-  'كلية الفنون التطبيقية',
-  'كلية الفنون التعبيرية والعلوم السينمائية',
-  'كلية الإدارة والعلوم المالية والاقتصادية',
-  'كلية اللغات والعلوم الإنسانية'
-];
+import { BUA_COLLEGES } from './RegisterStudentPage';
 
 export const UsersPage: React.FC = () => {
   const { user: currentUser, isSuperAdmin } = useAuth();
@@ -335,7 +320,7 @@ export const UsersPage: React.FC = () => {
                     className="bua-select text-xs"
                   >
                     <option value="">جميع الكليات (عام)</option>
-                    {COLLEGES.map(c => <option key={c} value={c}>{c}</option>)}
+                    {BUA_COLLEGES.map(c => <option key={c} value={c}>{c}</option>)}
                   </select>
                 </div>
               </div>

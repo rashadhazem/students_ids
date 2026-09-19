@@ -49,4 +49,4 @@ appsettings.Production.json
 # ===========================
 # Docker volumes
 # ===========================
-data/
+/data/

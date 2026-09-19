@@ -193,6 +193,7 @@ namespace BuaStudentApi.Controllers
             var cacheKey = $"card_{studentId}";
             var studentDto = await _cache.GetOrCreateAsync(cacheKey, async entry =>
             {
+                entry.Size = 1;
                 entry.SlidingExpiration = TimeSpan.FromMinutes(5);
                 entry.AbsoluteExpirationRelativeToNow = TimeSpan.FromHours(1);
 
