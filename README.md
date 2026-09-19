@@ -84,20 +84,6 @@ npm run dev
 
 ---
 
-## 🔐 Default Admin Credentials
-
-Upon initial launch, the system automatically seeds the default SuperAdmin account:
-
-| Field | Value |
-|---|---|
-| **Email / Username** | `superadmin` OR `admin@bua.edu.eg` |
-| **Password** | `Admin@123456` |
-| **Role** | `SuperAdmin` (Full Administrative Privileges) |
-
-> ⚠️ *Make sure to update the admin credentials after your initial deployment.*
-
----
-
 ## 📂 Project Structure
 
 ```text
