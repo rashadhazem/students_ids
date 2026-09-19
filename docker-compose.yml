@@ -1,0 +1,42 @@
+version: '3.8'
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: bua_backend
+    restart: unless-stopped
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Production
+      - DatabaseProvider=Sqlite
+      - ConnectionStrings__DefaultConnection=Data Source=/app/data/bua_students.db
+      - Jwt__SecretKey=BUA_Enterprise_Ultra_Secure_Secret_Key_2025_Long_Enough_256_Bits!
+    volumes:
+      - bua_data:/app/data
+      - bua_uploads:/app/wwwroot/uploads
+    ports:
+      - "5000:5000"
+    networks:
+      - bua_network
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    container_name: bua_frontend
+    restart: unless-stopped
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    networks:
+      - bua_network
+
+volumes:
+  bua_data:
+  bua_uploads:
+
+networks:
+  bua_network:
+    driver: bridge

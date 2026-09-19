@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>جامعة بدر بأسيوط | منظومة بطاقات الطلاب الرقمية</title>
+    <!-- Google Cairo & Tajawal Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@300;400;500;600;700;800;900&family=Tajawal:wght@300;400;500;700&display=swap" rel="stylesheet">
+    <!-- Tailwind CSS CDN with configuration -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            fontFamily: {
+              cairo: ['Cairo', 'sans-serif'],
+              tajawal: ['Tajawal', 'sans-serif'],
+            },
+            colors: {
+              navy: '#0d1f3c',
+              navyDark: '#071428',
+              navyLight: '#122948',
+              blue: '#1a3a6b',
+              blue2: '#1e4a8a',
+              gold: '#c8941a',
+              gold2: '#e8b84b',
+              gold3: '#f5d78e',
+              light: '#f0f4f9',
+              border: '#dce3ef',
+              buaText: '#1a2744',
+              muted: '#6b7a99',
+              success: '#276749',
+              danger: '#c53030',
+              warn: '#b45309',
+            }
+          }
+        }
+      }
+    </script>
+  </head>
+  <body class="bg-[#f0f4f9] text-[#1a2744] font-cairo antialiased min-h-screen">
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

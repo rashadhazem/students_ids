@@ -1,0 +1,52 @@
+# ===========================
+# .NET / C# Backend
+# ===========================
+backend/bin/
+backend/obj/
+backend/publish/
+backend/*.db
+backend/*.db-shm
+backend/*.db-wal
+backend/wwwroot/uploads/
+*.user
+*.suo
+.vs/
+
+# ===========================
+# Frontend (React / Vite)
+# ===========================
+frontend/node_modules/
+frontend/dist/
+frontend/.cache/
+frontend/tsconfig.app.tsbuildinfo
+frontend/tsconfig.node.tsbuildinfo
+
+# ===========================
+# Excel / Data Files (sensitive)
+# ===========================
+*.xlsx
+*.xls
+~$*
+
+# ===========================
+# OS / Editor
+# ===========================
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# ===========================
+# Logs & Secrets
+# ===========================
+*.log
+*.env
+.env.*
+appsettings.Production.json
+
+# ===========================
+# Docker volumes
+# ===========================
+data/
