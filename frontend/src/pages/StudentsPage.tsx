@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { apiClient, API_BASE_URL } from '../api/client';
 import { PhotoCropperModal } from '../components/PhotoCropperModal';
+import { BUA_COLLEGES, BUA_YEARS } from './RegisterStudentPage';
 
 interface Student {
   id: number;
@@ -59,18 +60,7 @@ export const StudentsPage: React.FC = () => {
     setTimeout(() => setToastMsg(null), 4000);
   };
 
-  const collegesList = [
-    'كلية الهندسة والتكنولوجيا',
-    'كلية الصيدلة وتصنيع الدواء',
-    'كلية طب الفم والأسنان',
-    'كلية العلاج الطبيعي',
-    'كلية التمريض',
-    'كلية تكنولوجيا العلوم الصحية التطبيقية',
-    'كلية الإدارة والعلوم المالية والاقتصادية',
-    'كلية الفنون التطبيقية'
-  ];
-
-  const yearsList = ['الفرقة الأولى', 'الفرقة الثانية', 'الفرقة الثالثة', 'الفرقة الرابعة', 'الفرقة الخامسة', '2024', '2025'];
+  // BUA_COLLEGES and BUA_YEARS imported from RegisterStudentPage
 
   const fetchStudents = async () => {
     setLoading(true);
@@ -284,7 +274,7 @@ export const StudentsPage: React.FC = () => {
               className="bua-select text-xs"
             >
               <option value="">كل السنوات</option>
-              {yearsList.map((y) => (
+              {BUA_YEARS.map((y) => (
                 <option key={y} value={y}>{y}</option>
               ))}
             </select>
@@ -299,7 +289,7 @@ export const StudentsPage: React.FC = () => {
               className="bua-select text-xs"
             >
               <option value="">كل الكليات</option>
-              {collegesList.map((c) => (
+              {BUA_COLLEGES.map((c) => (
                 <option key={c} value={c}>{c}</option>
               ))}
             </select>
@@ -534,7 +524,7 @@ export const StudentsPage: React.FC = () => {
                     className="bua-select text-xs"
                     required
                   >
-                    {collegesList.map(c => <option key={c} value={c}>{c}</option>)}
+                    {BUA_COLLEGES.map(c => <option key={c} value={c}>{c}</option>)}
                   </select>
                 </div>
                 <div className="bua-field mb-2">
@@ -545,7 +535,7 @@ export const StudentsPage: React.FC = () => {
                     className="bua-select text-xs"
                     required
                   >
-                    {yearsList.map(y => <option key={y} value={y}>{y}</option>)}
+                    {BUA_YEARS.map(y => <option key={y} value={y}>{y}</option>)}
                   </select>
                 </div>
               </div>
@@ -565,10 +555,11 @@ export const StudentsPage: React.FC = () => {
                   <label>رقم الهاتف</label>
                   <input
                     type="text"
-                    value={editForm.phone || ''}
-                    onChange={(e) => setEditForm({ ...editForm, phone: e.target.value })}
+                    value={editForm.mobile || editForm.phone || ''}
+                    onChange={(e) => setEditForm({ ...editForm, mobile: e.target.value, phone: e.target.value })}
                     className="bua-input text-xs"
                     dir="ltr"
+                    placeholder="01012345678"
                   />
                 </div>
               </div>

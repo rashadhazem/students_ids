@@ -307,16 +307,30 @@ namespace BuaStudentApi.Controllers
             var userIdClaim = User.FindFirst(ClaimTypes.NameIdentifier)?.Value;
             int? registeredById = int.TryParse(userIdClaim, out var uid) ? uid : null;
 
+            // Accept 'phone' from frontend as fallback for 'mobile'
+            var phoneValue = !string.IsNullOrWhiteSpace(dto.Mobile) ? dto.Mobile.Trim()
+                           : (Request.Form.TryGetValue("phone", out var phoneForm) && !string.IsNullOrWhiteSpace(phoneForm)
+                              ? phoneForm.ToString().Trim() : null);
+
+            // Validate national ID uniqueness
+            if (!string.IsNullOrWhiteSpace(dto.NationalId))
+            {
+                var nidExists = await _db.Students.AnyAsync(s => s.NationalId == dto.NationalId.Trim() && s.StudentId != studentId);
+                if (nidExists)
+                    return Conflict(new { success = false, duplicate = true, message = "هذا الرقم القومي مسجل لطالب آخر في المنظومة" });
+            }
+
             var student = new Student
             {
                 StudentId = studentId,
                 FullName = (dto.FullName ?? "").Trim(),
-                Year = (dto.Year ?? "2024-2025").Trim(),
+                Year = (dto.Year ?? "الفرقة الأولى").Trim(),
                 College = (dto.College ?? "").Trim(),
                 Section = !string.IsNullOrWhiteSpace(dto.Section) ? dto.Section.Trim() : null,
                 NationalId = !string.IsNullOrWhiteSpace(dto.NationalId) ? dto.NationalId.Trim() : null,
-                Mobile = !string.IsNullOrWhiteSpace(dto.Mobile) ? dto.Mobile.Trim() : null,
-                Email = !string.IsNullOrWhiteSpace(dto.Email) ? dto.Email.Trim().ToLowerInvariant() : $"{studentId}@bua.edu.eg",
+                Mobile = phoneValue,
+                Email = !string.IsNullOrWhiteSpace(dto.Email) ? dto.Email.Trim().ToLowerInvariant()
+                       : (phoneValue != null ? null : $"{studentId}@bua.edu.eg"),
                 ImagePath = relativeImagePath,
                 RegisteredBy = registeredById,
                 CreatedAt = DateTime.UtcNow,
