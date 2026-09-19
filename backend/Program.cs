@@ -1,11 +1,15 @@
 using System;
 using System.IO;
 using System.Text;
+using System.Threading;
+using System.Threading.RateLimiting;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.RateLimiting;
+using Microsoft.AspNetCore.ResponseCompression;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -33,12 +37,14 @@ builder.WebHost.ConfigureKestrel(serverOptions =>
     serverOptions.Limits.MinRequestBodyDataRate = null; // Prevent timeouts during heavy concurrent photo uploads
 });
 
-// 1. Database Configuration
+// 1. Database Configuration — Use DbContext Pooling for 5,000+ concurrent requests
 var dbProvider = builder.Configuration["DatabaseProvider"] ?? "Sqlite";
 var connectionString = builder.Configuration.GetConnectionString(
     dbProvider.Equals("Postgres", StringComparison.OrdinalIgnoreCase) ? "PostgresConnection" : "DefaultConnection");
 
-builder.Services.AddDbContext<AppDbContext>(options =>
+// DbContext pooling reuses context instances instead of creating new ones per request
+// Pool size = 1024 means up to 1024 contexts can be reused simultaneously without allocations
+builder.Services.AddDbContextPool<AppDbContext>(options =>
 {
     if (dbProvider.Equals("Postgres", StringComparison.OrdinalIgnoreCase))
     {
@@ -46,15 +52,97 @@ builder.Services.AddDbContext<AppDbContext>(options =>
     }
     else
     {
-        options.UseSqlite(connectionString);
+        options.UseSqlite(connectionString,
+            sqliteOpts => sqliteOpts.CommandTimeout(30));
     }
-});
+}, poolSize: 256);
 
 // 2. High-Performance Caching & Concurrency Components
-builder.Services.AddMemoryCache();
+builder.Services.AddMemoryCache(opts =>
+{
+    opts.SizeLimit = 50_000;               // Max 50k cached student card entries
+    opts.CompactionPercentage = 0.20;      // Evict 20% when limit reached
+    opts.ExpirationScanFrequency = TimeSpan.FromMinutes(2);
+});
 builder.Services.AddSingleton<IDbWriteCoordinator, DbWriteCoordinator>();
 builder.Services.AddSingleton<IPhotoProcessingQueue, PhotoProcessingQueue>();
 builder.Services.AddHostedService<PhotoProcessingWorkerService>();
+
+// 2b. Response Compression — reduces bandwidth 60-80% for API JSON responses
+builder.Services.AddResponseCompression(opts =>
+{
+    opts.EnableForHttps = true;
+    opts.Providers.Add<BrotliCompressionProvider>();
+    opts.Providers.Add<GzipCompressionProvider>();
+    opts.MimeTypes = ResponseCompressionDefaults.MimeTypes.Concat([
+        "application/json",
+        "image/svg+xml",
+        "text/plain"
+    ]);
+});
+builder.Services.Configure<BrotliCompressionProviderOptions>(opts => opts.Level = System.IO.Compression.CompressionLevel.Fastest);
+builder.Services.Configure<GzipCompressionProviderOptions>(opts => opts.Level = System.IO.Compression.CompressionLevel.Fastest);
+
+// 2c. Rate Limiter — Enterprise concurrency protection for 5,000+ students
+builder.Services.AddRateLimiter(options =>
+{
+    options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    options.OnRejected = async (context, token) =>
+    {
+        context.HttpContext.Response.ContentType = "application/json";
+        await context.HttpContext.Response.WriteAsync(
+            "{\"success\":false,\"message\":\"الخادم مشغول حالياً بسبب الضغط الكثيف. يرجى الانتظار لحظة والمحاولة مجدداً.\"}",
+            token);
+    };
+
+    // Policy 1: Global concurrency limiter — max 6,000 concurrent requests total
+    options.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(ctx =>
+        RateLimitPartition.GetConcurrencyLimiter("global", _ => new ConcurrencyLimiterOptions
+        {
+            PermitLimit = 6000,
+            QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
+            QueueLimit = 2000   // Allow 2000 more to queue instead of rejecting immediately
+        }));
+
+    // Policy 2: Per-IP fixed window — 120 requests/minute per IP (generous for students)
+    options.AddPolicy("per_ip", ctx =>
+    {
+        var ip = ctx.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+        return RateLimitPartition.GetFixedWindowLimiter(ip, _ => new FixedWindowRateLimiterOptions
+        {
+            PermitLimit = 120,
+            Window = TimeSpan.FromMinutes(1),
+            QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
+            QueueLimit = 20
+        });
+    });
+
+    // Policy 3: Login endpoint — 10 attempts/minute per IP (prevents brute force)
+    options.AddPolicy("login_limit", ctx =>
+    {
+        var ip = ctx.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+        return RateLimitPartition.GetFixedWindowLimiter($"login_{ip}", _ => new FixedWindowRateLimiterOptions
+        {
+            PermitLimit = 10,
+            Window = TimeSpan.FromMinutes(1),
+            QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
+            QueueLimit = 0      // No queuing for login — reject immediately
+        });
+    });
+
+    // Policy 4: Photo upload — 5 uploads/minute per IP (photo processing is CPU-heavy)
+    options.AddPolicy("photo_upload", ctx =>
+    {
+        var ip = ctx.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+        return RateLimitPartition.GetFixedWindowLimiter($"photo_{ip}", _ => new FixedWindowRateLimiterOptions
+        {
+            PermitLimit = 5,
+            Window = TimeSpan.FromMinutes(1),
+            QueueProcessingOrder = QueueProcessingOrder.OldestFirst,
+            QueueLimit = 3
+        });
+    });
+});
 
 // 3. Application Core Services
 builder.Services.AddScoped<IJwtService, JwtService>();
@@ -265,8 +353,18 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI();
 }
 
+// Health endpoint — used by load balancers and monitoring systems
+app.MapGet("/health", () => Results.Ok(new
+{
+    status = "healthy",
+    timestamp = DateTime.UtcNow,
+    uptime = (DateTime.UtcNow - System.Diagnostics.Process.GetCurrentProcess().StartTime.ToUniversalTime()).ToString(@"d\.hh\:mm\:ss")
+})).AllowAnonymous();
+
+app.UseResponseCompression();  // Must be before any response-writing middleware
 app.UseRouting();
 app.UseCors("AllowFrontend");
+app.UseRateLimiter();           // Global rate limiter after CORS
 app.UseMiddleware<SecurityShieldMiddleware>();
 
 // Enable static file serving for uploaded photos
@@ -285,7 +383,8 @@ app.UseStaticFiles(new StaticFileOptions
 app.UseAuthentication();
 app.UseAuthorization();
 
-app.MapControllers();
+// Apply per-IP rate limit to all API endpoints
+app.MapControllers().RequireRateLimiting("per_ip");
 app.MapHub<JobProgressHub>("/hubs/job-progress");
 
 app.Run();

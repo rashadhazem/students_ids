@@ -5,6 +5,7 @@ using System.Security.Cryptography;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using BuaStudentApi.Data;
 using BuaStudentApi.DTOs;
@@ -29,6 +30,7 @@ namespace BuaStudentApi.Controllers
         }
 
         [HttpPost("login")]
+        [EnableRateLimiting("login_limit")]  // Max 10 login attempts/min per IP
         public async Task<IActionResult> Login([FromBody] LoginRequestDto dto)
         {
             if (!ModelState.IsValid)
@@ -102,6 +104,7 @@ namespace BuaStudentApi.Controllers
         }
 
         [HttpPost("student-login")]
+        [EnableRateLimiting("login_limit")]  // Max 10 attempts/min per IP
         public async Task<IActionResult> StudentLogin([FromBody] StudentLoginRequestDto dto)
         {
             if (!ModelState.IsValid)

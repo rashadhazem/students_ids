@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.EntityFrameworkCore;
 using BuaStudentApi.Data;
 using BuaStudentApi.DTOs;
@@ -37,6 +38,7 @@ namespace BuaStudentApi.Controllers
 
         [HttpPost("crop-preview")]
         [Authorize]
+        [EnableRateLimiting("photo_upload")]   // Max 5 previews/min per IP
         [RequestSizeLimit(10 * 1024 * 1024)] // 10 MB limit
         public async Task<IActionResult> CropPreview(
             [FromForm] IFormFile? file,
@@ -94,6 +96,7 @@ namespace BuaStudentApi.Controllers
 
         [HttpPost("upload")]
         [Authorize]
+        [EnableRateLimiting("photo_upload")]   // Max 5 uploads/min per IP
         [RequestSizeLimit(15 * 1024 * 1024)]
         public async Task<IActionResult> Upload(
             [FromForm] IFormFile? file,
