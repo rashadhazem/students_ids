@@ -37,7 +37,7 @@ namespace BuaStudentApi.Controllers
         }
 
         [HttpPost("crop-preview")]
-        [Authorize]
+        [AllowAnonymous]
         [EnableRateLimiting("photo_upload")]   // Max 5 previews/min per IP
         [RequestSizeLimit(10 * 1024 * 1024)] // 10 MB limit
         public async Task<IActionResult> CropPreview(
@@ -88,6 +88,10 @@ namespace BuaStudentApi.Controllers
                     Message = "تم توليد المعاينة بنجاح"
                 });
             }
+            catch (InvalidOperationException ex)
+            {
+                return BadRequest(new PhotoCropPreviewDto { Success = false, Message = ex.Message });
+            }
             catch (Exception ex)
             {
                 return StatusCode(500, new PhotoCropPreviewDto { Success = false, Message = $"خطأ في معالجة الصورة: {ex.Message}" });
@@ -95,7 +99,7 @@ namespace BuaStudentApi.Controllers
         }
 
         [HttpPost("upload")]
-        [Authorize]
+        [AllowAnonymous]
         [EnableRateLimiting("photo_upload")]   // Max 5 uploads/min per IP
         [RequestSizeLimit(15 * 1024 * 1024)]
         public async Task<IActionResult> Upload(
@@ -123,21 +127,22 @@ namespace BuaStudentApi.Controllers
 
             studentId = studentId.Trim();
 
-            var currentRole = User.FindFirstValue(ClaimTypes.Role) ?? "";
-            var currentUserId = int.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out var uid) ? uid : (int?)null;
-            var currentCollege = User.FindFirstValue("College");
+            var currentRole = User.FindFirst(ClaimTypes.Role)?.Value ?? "";
+            var isSuperAdmin = string.Equals(currentRole, "superadmin", StringComparison.OrdinalIgnoreCase);
+            var currentUserId = int.TryParse(User.FindFirst(ClaimTypes.NameIdentifier)?.Value, out var uid) ? uid : (int?)null;
+            var currentCollege = User.FindFirst("college")?.Value ?? User.FindFirst("College")?.Value;
 
             var student = await _context.Students.FirstOrDefaultAsync(s => s.StudentId == studentId);
             if (student == null)
                 return NotFound(new PhotoUploadResponseDto { Success = false, Message = $"الطالب صاحب الرقم {studentId} غير موجود" });
 
-            // Role check: Admin can only modify within their college
-            if (currentRole == "Admin" && !string.IsNullOrWhiteSpace(currentCollege) && student.College != currentCollege)
-                return Forbid();
+            // Role check: Supervisor can only modify within their college
+            if (!isSuperAdmin && !string.IsNullOrWhiteSpace(currentCollege) && student.College != currentCollege)
+                return StatusCode(403, new PhotoUploadResponseDto { Success = false, Message = $"غير مصرح: يمكنك تعديل صور طلاب كلية {currentCollege} فقط" });
 
             // Student role can only modify their own photo
-            if (currentRole == "Student" && student.UserId != currentUserId)
-                return Forbid();
+            if (string.Equals(currentRole, "student", StringComparison.OrdinalIgnoreCase) && student.UserId != currentUserId)
+                return StatusCode(403, new PhotoUploadResponseDto { Success = false, Message = "غير مصرح: يمكنك تعديل صورتك الشخصية فقط" });
 
             using var ms = new MemoryStream();
             await file.CopyToAsync(ms);
@@ -239,6 +244,10 @@ namespace BuaStudentApi.Controllers
                     ImageUrl = $"/{relativePath}",
                     AsyncJob = false
                 });
+            }
+            catch (InvalidOperationException ex)
+            {
+                return BadRequest(new PhotoUploadResponseDto { Success = false, Message = ex.Message });
             }
             catch (Exception ex)
             {

@@ -24,6 +24,7 @@ interface Student {
 export const StudentsPage: React.FC = () => {
   const { user } = useAuth();
   const navigate = useNavigate();
+  const isSupervisor = user?.role?.toLowerCase() !== 'superadmin' && !!user?.college;
 
   const [students, setStudents] = useState<Student[]>([]);
   const [loading, setLoading] = useState(true);
@@ -31,7 +32,7 @@ export const StudentsPage: React.FC = () => {
 
   // Filters matching admin_panel.html
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedCollege, setSelectedCollege] = useState('');
+  const [selectedCollege, setSelectedCollege] = useState(user?.college && user?.role?.toLowerCase() !== 'superadmin' ? user.college : '');
   const [selectedYear, setSelectedYear] = useState('');
   const [photoFilter, setPhotoFilter] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
@@ -87,6 +88,12 @@ export const StudentsPage: React.FC = () => {
   };
 
   useEffect(() => {
+    if (isSupervisor && user?.college) {
+      setSelectedCollege(user.college);
+    }
+  }, [user, isSupervisor]);
+
+  useEffect(() => {
     fetchStudents();
   }, [currentPage, selectedCollege, selectedYear, photoFilter]);
 
@@ -98,7 +105,9 @@ export const StudentsPage: React.FC = () => {
 
   const handleResetFilters = () => {
     setSearchQuery('');
-    setSelectedCollege('');
+    if (!isSupervisor) {
+      setSelectedCollege('');
+    }
     setSelectedYear('');
     setPhotoFilter('');
     setCurrentPage(1);
@@ -160,13 +169,55 @@ export const StudentsPage: React.FC = () => {
   };
 
   // Download Photos ZIP
-  const handleDownloadZip = () => {
-    window.open(`${API_BASE_URL}/api/export/photos-zip`, '_blank');
+  const handleDownloadZip = async () => {
+    try {
+      const c = isSupervisor && user?.college ? user.college : selectedCollege;
+      const params = new URLSearchParams();
+      if (c) params.append('college', c);
+      showToast('جاري تجهيز وتحميل ملف الصور المضغوط...', false);
+
+      const res = await apiClient.get(`/export/photos-zip?${params.toString()}`, {
+        responseType: 'blob',
+      });
+      const url = window.URL.createObjectURL(new Blob([res.data]));
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', `students_photos_${c || 'all'}_${Date.now()}.zip`);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+      showToast('تم تحميل صور الطلاب بنجاح ✓', false);
+    } catch (err: any) {
+      showToast(err.response?.data?.message || 'فشل تحميل ملف الصور', true);
+    }
   };
 
   // Export Excel
-  const handleExportExcel = () => {
-    window.open(`${API_BASE_URL}/api/export/excel`, '_blank');
+  const handleExportExcel = async () => {
+    try {
+      const c = isSupervisor && user?.college ? user.college : selectedCollege;
+      const params = new URLSearchParams();
+      if (c) params.append('college', c);
+      if (selectedYear) params.append('year', selectedYear);
+      if (searchQuery) params.append('search', searchQuery);
+      showToast('جاري تصدير ملف Excel...', false);
+
+      const res = await apiClient.get(`/export/students-excel?${params.toString()}`, {
+        responseType: 'blob',
+      });
+      const url = window.URL.createObjectURL(new Blob([res.data]));
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', `students_${c || 'all'}_${Date.now()}.xlsx`);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+      showToast('تم تحميل ملف Excel بنجاح ✓', false);
+    } catch (err: any) {
+      showToast(err.response?.data?.message || 'فشل تصدير ملف Excel', true);
+    }
   };
 
   return (
@@ -283,16 +334,28 @@ export const StudentsPage: React.FC = () => {
           {/* College Filter */}
           <div className="w-56 text-right">
             <label className="text-xs font-semibold text-muted block mb-1">الكلية</label>
-            <select
-              value={selectedCollege}
-              onChange={(e) => setSelectedCollege(e.target.value)}
-              className="bua-select text-xs"
-            >
-              <option value="">كل الكليات</option>
-              {BUA_COLLEGES.map((c) => (
-                <option key={c} value={c}>{c}</option>
-              ))}
-            </select>
+            {isSupervisor ? (
+              <div>
+                <input
+                  type="text"
+                  value={user?.college || selectedCollege}
+                  disabled
+                  className="bua-input text-xs bg-slate-100 text-slate-700 cursor-not-allowed font-semibold border-slate-300"
+                />
+                <span className="text-[10px] text-blue-700 font-semibold mt-0.5 block">🔒 كليتك المسندة</span>
+              </div>
+            ) : (
+              <select
+                value={selectedCollege}
+                onChange={(e) => setSelectedCollege(e.target.value)}
+                className="bua-select text-xs"
+              >
+                <option value="">كل الكليات</option>
+                {BUA_COLLEGES.map((c) => (
+                  <option key={c} value={c}>{c}</option>
+                ))}
+              </select>
+            )}
           </div>
 
           {/* Photo Filter */}
@@ -341,18 +404,17 @@ export const StudentsPage: React.FC = () => {
             <thead>
               <tr>
                 <th>الصورة</th>
-                <th>رقم الطالب</th>
                 <th>الاسم الكامل</th>
-                <th>الكلية</th>
-                <th>السنة</th>
                 <th>البريد الإلكتروني</th>
+                <th>رقم التليفون</th>
+                <th>الكلية</th>
                 <th>إجراءات</th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={7} className="text-center py-12 text-muted font-tajawal">
+                  <td colSpan={6} className="text-center py-12 text-muted font-tajawal">
                     <div className="inline-block w-8 h-8 border-2 border-blue border-t-transparent rounded-full animate-spin mb-2" />
                     <div>جارٍ تحميل بيانات الطلاب…</div>
                   </td>
@@ -372,33 +434,15 @@ export const StudentsPage: React.FC = () => {
                         }}
                       />
                     </td>
-                    <td>
-                      <span className="student-id-badge">{s.studentId}</span>
-                      {s.nationalId && (
-                        <div className="text-[10px] text-muted font-mono mt-0.5" title="الرقم القومي">
-                          {s.nationalId}
-                        </div>
-                      )}
-                    </td>
                     <td className="font-bold text-navy">{s.fullName}</td>
-                    <td>
-                      <span className="college-tag">{s.college}</span>
-                      {s.section && (
-                        <span className="text-[11px] text-muted block mt-0.5 font-tajawal">
-                          قسم: {s.section}
-                        </span>
-                      )}
-                    </td>
-                    <td>
-                      <span className="year-tag">{s.year}</span>
+                    <td className="text-muted text-xs font-mono" dir="ltr">
+                      {s.email || '–'}
                     </td>
                     <td className="text-muted text-xs font-mono" dir="ltr">
-                      <div>{s.email || '–'}</div>
-                      {s.mobile && (
-                        <div className="text-[11px] text-slate-500 font-mono mt-0.5" dir="ltr">
-                          📞 {s.mobile}
-                        </div>
-                      )}
+                      {s.mobile || '–'}
+                    </td>
+                    <td>
+                      <span className="college-tag">{s.college}</span>
                     </td>
                     <td>
                       <div className="flex items-center gap-1.5 flex-wrap">
@@ -505,12 +549,13 @@ export const StudentsPage: React.FC = () => {
                   />
                 </div>
                 <div className="bua-field mb-2">
-                  <label>رقم الجلوس</label>
+                  <label>السكشن / الشعبة</label>
                   <input
                     type="text"
-                    value={editForm.seatNumber || ''}
-                    onChange={(e) => setEditForm({ ...editForm, seatNumber: e.target.value })}
+                    value={editForm.section || ''}
+                    onChange={(e) => setEditForm({ ...editForm, section: e.target.value })}
                     className="bua-input text-xs"
+                    placeholder="مثال: سكشن 1 أو أ"
                   />
                 </div>
               </div>
@@ -518,14 +563,26 @@ export const StudentsPage: React.FC = () => {
               <div className="grid grid-cols-2 gap-3">
                 <div className="bua-field mb-2">
                   <label>الكلية</label>
-                  <select
-                    value={editForm.college || ''}
-                    onChange={(e) => setEditForm({ ...editForm, college: e.target.value })}
-                    className="bua-select text-xs"
-                    required
-                  >
-                    {BUA_COLLEGES.map(c => <option key={c} value={c}>{c}</option>)}
-                  </select>
+                  {isSupervisor ? (
+                    <div>
+                      <input
+                        type="text"
+                        value={user?.college || editForm.college || ''}
+                        disabled
+                        className="bua-input text-xs bg-slate-100 text-slate-700 cursor-not-allowed font-semibold border-slate-300"
+                      />
+                      <span className="text-[10px] text-blue-700 font-semibold mt-0.5 block">🔒 لا يمكن تغيير كلية الطالب</span>
+                    </div>
+                  ) : (
+                    <select
+                      value={editForm.college || ''}
+                      onChange={(e) => setEditForm({ ...editForm, college: e.target.value })}
+                      className="bua-select text-xs"
+                      required
+                    >
+                      {BUA_COLLEGES.map(c => <option key={c} value={c}>{c}</option>)}
+                    </select>
+                  )}
                 </div>
                 <div className="bua-field mb-2">
                   <label>السنة / الفرقة</label>

@@ -31,7 +31,20 @@ namespace BuaStudentApi.Controllers
             [FromQuery] int page = 1,
             [FromQuery] int pageSize = 25)
         {
+            var userRole = User.FindFirst(ClaimTypes.Role)?.Value;
+            var isSuperAdmin = string.Equals(userRole, "superadmin", StringComparison.OrdinalIgnoreCase);
+            var userCollege = User.FindFirst("college")?.Value ?? User.FindFirst("College")?.Value;
+
             var query = _context.AuditLogs.Include(a => a.User).AsQueryable();
+
+            if (!isSuperAdmin && !string.IsNullOrEmpty(userCollege))
+            {
+                var collegeStudentIds = _context.Students.Where(s => s.College == userCollege).Select(s => s.StudentId);
+                query = query.Where(a =>
+                    (a.User != null && a.User.College == userCollege) ||
+                    (a.Target != null && collegeStudentIds.Contains(a.Target)) ||
+                    (a.Detail != null && a.Detail.Contains(userCollege)));
+            }
 
             if (!string.IsNullOrWhiteSpace(action))
             {
@@ -104,7 +117,22 @@ namespace BuaStudentApi.Controllers
         [HttpGet("actions")]
         public async Task<IActionResult> GetDistinctActions()
         {
-            var actions = await _context.AuditLogs
+            var userRole = User.FindFirst(ClaimTypes.Role)?.Value;
+            var isSuperAdmin = string.Equals(userRole, "superadmin", StringComparison.OrdinalIgnoreCase);
+            var userCollege = User.FindFirst("college")?.Value ?? User.FindFirst("College")?.Value;
+
+            var query = _context.AuditLogs.AsQueryable();
+
+            if (!isSuperAdmin && !string.IsNullOrEmpty(userCollege))
+            {
+                var collegeStudentIds = _context.Students.Where(s => s.College == userCollege).Select(s => s.StudentId);
+                query = query.Where(a =>
+                    (a.User != null && a.User.College == userCollege) ||
+                    (a.Target != null && collegeStudentIds.Contains(a.Target)) ||
+                    (a.Detail != null && a.Detail.Contains(userCollege)));
+            }
+
+            var actions = await query
                 .Select(a => a.Action)
                 .Distinct()
                 .OrderBy(a => a)

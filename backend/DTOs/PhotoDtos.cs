@@ -21,17 +21,26 @@ namespace BuaStudentApi.DTOs
 
     public class BulkImportRowPreview
     {
+        public int RowNumber { get; set; }
         public string Sid { get; set; } = string.Empty;
         public string Name { get; set; } = string.Empty;
+        public string College { get; set; } = string.Empty;
         public string Status { get; set; } = string.Empty;
         public string? Email { get; set; }
+        public string? Reason { get; set; }
     }
 
     public class BulkImportResultDto
     {
+        public int Total { get; set; } = 0;
         public int Created { get; set; } = 0;
+        public int Updated { get; set; } = 0;
         public int Skipped { get; set; } = 0;
+        public int IgnoredEmptyRows { get; set; } = 0;
         public List<string> Errors { get; set; } = new();
+        public List<BulkImportRowPreview> PassedRows { get; set; } = new();
+        public List<BulkImportRowPreview> SkippedRows { get; set; } = new();
         public List<BulkImportRowPreview> Preview { get; set; } = new();
+        public string Message { get; set; } = string.Empty;
     }
 }

@@ -2,13 +2,26 @@ import React, { useState, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { apiClient, API_BASE_URL } from '../api/client';
 
+interface ImportRow {
+  rowNumber?: number;
+  sid?: string;
+  name?: string;
+  college?: string;
+  status?: string;
+  email?: string;
+  reason?: string;
+}
+
 interface ImportResult {
   totalRows: number;
   createdCount: number;
+  updatedCount: number;
   skippedCount: number;
+  ignoredEmptyRows: number;
   errorCount: number;
   errors?: string[];
-  skippedDetails?: string[];
+  passedRows?: ImportRow[];
+  skippedRows?: ImportRow[];
   message?: string;
 }
 
@@ -18,6 +31,7 @@ export const BulkImportPage: React.FC = () => {
   const [importing, setImporting] = useState(false);
   const [progress, setProgress] = useState(0);
   const [result, setResult] = useState<ImportResult | null>(null);
+  const [activeResultTab, setActiveResultTab] = useState<'passed' | 'skipped'>('passed');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -93,12 +107,20 @@ export const BulkImportPage: React.FC = () => {
             setResult({
               totalRows: r.total || 0,
               createdCount: r.created || 0,
-              skippedCount: (r.skipped || 0) + (r.updated || 0),
+              updatedCount: r.updated || 0,
+              skippedCount: r.skipped || 0,
+              ignoredEmptyRows: r.ignoredEmptyRows || 0,
               errorCount: (r.errors || []).length,
               errors: r.errors || [],
-              skippedDetails: r.preview?.map((p: any) => `${p.sid} – ${p.name}: ${p.status}`) || [],
+              passedRows: r.passedRows || [],
+              skippedRows: r.skippedRows || [],
               message: r.message
             });
+            if ((!r.passedRows || r.passedRows.length === 0) && (r.skippedRows && r.skippedRows.length > 0)) {
+              setActiveResultTab('skipped');
+            } else {
+              setActiveResultTab('passed');
+            }
             setImporting(false);
           } else if (job?.status === 'Failed') {
             clearInterval(pollInterval);
@@ -120,8 +142,20 @@ export const BulkImportPage: React.FC = () => {
     }
   };
 
-  const handleDownloadTemplate = () => {
-    window.open(`${API_BASE_URL}/api/bulkimport/template`, '_blank');
+  const handleDownloadTemplate = async () => {
+    try {
+      const res = await apiClient.get('/bulkimport/template', { responseType: 'blob' });
+      const url = window.URL.createObjectURL(new Blob([res.data]));
+      const link = document.createElement('a');
+      link.href = url;
+      link.setAttribute('download', 'BUA_Students_Template.xlsx');
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(url);
+    } catch {
+      window.open(`${API_BASE_URL}/api/bulkimport/template`, '_blank');
+    }
   };
 
 
@@ -236,58 +270,173 @@ export const BulkImportPage: React.FC = () => {
             </div>
           </div>
 
-          {/* Results Card (matching bulk_import.html) */}
+          {/* Results Card (enhanced with passed and skipped row breakdown) */}
           {result && (
-            <div className="bua-card">
-              <div className="bua-card-header bg-[#fafbfd]">
-                <svg viewBox="0 0 24 24" className="w-4 h-4 fill-success">
-                  <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41L9 16.17z" />
-                </svg>
-                <h2>نتيجة الاستيراد</h2>
+            <div className="bua-card mt-5">
+              <div className="bua-card-header bg-[#fafbfd] flex justify-between items-center flex-wrap gap-2">
+                <div className="flex items-center gap-2">
+                  <svg viewBox="0 0 24 24" className="w-5 h-5 fill-success">
+                    <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41L9 16.17z" />
+                  </svg>
+                  <h2 className="text-base font-bold text-navy">تقرير تفصيلي لنتيجة الاستيراد</h2>
+                </div>
+                <span className="text-xs bg-slate-100 text-slate-700 px-3 py-1 rounded-full font-bold">
+                  إجمالي المفحوص: {result.totalRows} صف
+                </span>
               </div>
+
               <div className="bua-card-body">
-                {/* 3 KPI Counters */}
-                <div className="grid grid-cols-3 gap-3 mb-4 text-center">
-                  <div className="bg-emerald-50 rounded-xl p-3 border border-emerald-200">
+                {/* 4 KPI Counters */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 mb-4 text-center">
+                  <div className="bg-emerald-50 rounded-xl p-2.5 border border-emerald-200">
                     <div className="text-2xl font-black text-emerald-800 leading-none">
                       {result.createdCount}
                     </div>
-                    <div className="text-[11px] text-muted font-tajawal mt-1">تم الإنشاء</div>
+                    <div className="text-[11px] font-bold text-emerald-700 font-tajawal mt-1">✓ طلاب جدد</div>
                   </div>
-                  <div className="bg-amber-50 rounded-xl p-3 border border-amber-200">
+
+                  <div className="bg-blue-50 rounded-xl p-2.5 border border-blue-200">
+                    <div className="text-2xl font-black text-blue leading-none">
+                      {result.updatedCount}
+                    </div>
+                    <div className="text-[11px] font-bold text-blue font-tajawal mt-1">⟳ تم التحديث</div>
+                  </div>
+
+                  <div className="bg-amber-50 rounded-xl p-2.5 border border-amber-200">
                     <div className="text-2xl font-black text-amber-800 leading-none">
                       {result.skippedCount}
                     </div>
-                    <div className="text-[11px] text-muted font-tajawal mt-1">تم التخطي</div>
+                    <div className="text-[11px] font-bold text-amber-700 font-tajawal mt-1">⚠️ تم تخطيها لملاحظات</div>
                   </div>
-                  <div className="bg-red-50 rounded-xl p-3 border border-red-200">
-                    <div className="text-2xl font-black text-red-800 leading-none">
-                      {result.errorCount}
+
+                  <div className="bg-slate-50 rounded-xl p-2.5 border border-slate-200">
+                    <div className="text-2xl font-black text-slate-700 leading-none">
+                      {result.ignoredEmptyRows}
                     </div>
-                    <div className="text-[11px] text-muted font-tajawal mt-1">أخطاء</div>
+                    <div className="text-[11px] font-bold text-slate-500 font-tajawal mt-1">ℹ️ صفوف فارغة أُهملت</div>
                   </div>
                 </div>
 
-                {/* Details List */}
-                <div className="max-h-60 overflow-y-auto space-y-2 text-xs font-tajawal">
-                  {result.message && (
-                    <div className="p-2 rounded bg-emerald-50 text-emerald-800 font-semibold text-right">
-                      ✓ {result.message}
-                    </div>
-                  )}
+                {/* Main Notification Banner */}
+                {result.message && (
+                  <div className="p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs font-semibold text-right mb-4 flex items-center gap-2">
+                    <span className="text-base">✓</span>
+                    <span>{result.message}</span>
+                  </div>
+                )}
 
-                  {result.skippedDetails?.map((skip, i) => (
-                    <div key={i} className="p-2 rounded bg-amber-50 text-amber-800 text-right">
-                      ⚠️ {skip}
-                    </div>
-                  ))}
+                {/* Tab Switcher: Passed vs Skipped */}
+                <div className="flex gap-2 border-b border-slate-200 mb-4 text-xs font-bold font-cairo">
+                  <button
+                    type="button"
+                    onClick={() => setActiveResultTab('passed')}
+                    className={`pb-2.5 px-3 border-b-2 -mb-[1px] transition cursor-pointer ${
+                      activeResultTab === 'passed'
+                        ? 'border-emerald-600 text-emerald-700 font-black'
+                        : 'border-transparent text-slate-500 hover:text-slate-800'
+                    }`}
+                  >
+                    ✓ الصفوف المقبولة والمعتمدة ({result.passedRows?.length || 0})
+                  </button>
 
-                  {result.errors?.map((err, i) => (
-                    <div key={i} className="p-2 rounded bg-red-50 text-red-800 text-right">
-                      ✗ {err}
-                    </div>
-                  ))}
+                  <button
+                    type="button"
+                    onClick={() => setActiveResultTab('skipped')}
+                    className={`pb-2.5 px-3 border-b-2 -mb-[1px] transition cursor-pointer ${
+                      activeResultTab === 'skipped'
+                        ? 'border-amber-600 text-amber-700 font-black'
+                        : 'border-transparent text-slate-500 hover:text-slate-800'
+                    }`}
+                  >
+                    ⚠️ الصفوف المستبعدة والملاحظات ({result.skippedRows?.length || 0})
+                  </button>
                 </div>
+
+                {/* Tab Content: Passed Rows */}
+                {activeResultTab === 'passed' && (
+                  <div>
+                    {(!result.passedRows || result.passedRows.length === 0) ? (
+                      <div className="text-center py-6 text-xs text-slate-400 font-tajawal">
+                        لا توجد صفوف جديدة تم اعتمادها في هذا الملف.
+                      </div>
+                    ) : (
+                      <div className="max-h-72 overflow-y-auto border border-slate-100 rounded-xl">
+                        <table className="w-full text-right text-xs">
+                          <thead className="bg-slate-50 text-slate-600 font-bold sticky top-0 border-b border-slate-200">
+                            <tr>
+                              <th className="p-2.5">رقم الصف</th>
+                              <th className="p-2.5">كود الطالب</th>
+                              <th className="p-2.5">اسم الطالب</th>
+                              <th className="p-2.5">الكلية</th>
+                              <th className="p-2.5">الحالة</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100 font-tajawal">
+                            {result.passedRows.map((r, idx) => (
+                              <tr key={idx} className="hover:bg-slate-50/70">
+                                <td className="p-2.5 font-bold text-slate-600">الصف {r.rowNumber || idx + 1}</td>
+                                <td className="p-2.5 font-mono font-bold text-navy">{r.sid}</td>
+                                <td className="p-2.5 font-bold text-slate-800">{r.name}</td>
+                                <td className="p-2.5 text-slate-600">{r.college || '—'}</td>
+                                <td className="p-2.5">
+                                  <span
+                                    className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                                      r.status?.includes('جديد')
+                                        ? 'bg-emerald-100 text-emerald-800'
+                                        : 'bg-blue-100 text-blue-800'
+                                    }`}
+                                  >
+                                    {r.status}
+                                  </span>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Tab Content: Skipped Rows with Reasons */}
+                {activeResultTab === 'skipped' && (
+                  <div>
+                    {(!result.skippedRows || result.skippedRows.length === 0) ? (
+                      <div className="text-center py-6 text-xs text-emerald-700 font-semibold font-tajawal bg-emerald-50/50 rounded-xl">
+                        ✓ ممتاز! لم يتم استبعاد أي صف، جميع صفوف البيانات تم قبولها واعتمادها بنجاح.
+                      </div>
+                    ) : (
+                      <div className="max-h-72 overflow-y-auto space-y-2 text-xs font-tajawal">
+                        {result.skippedRows.map((r, idx) => (
+                          <div
+                            key={idx}
+                            className="p-3 rounded-xl bg-amber-50/80 border border-amber-200 text-right flex items-start gap-2.5"
+                          >
+                            <span className="text-sm text-amber-600 font-bold mt-0.5">⚠️</span>
+                            <div className="flex-1">
+                              <div className="flex items-center justify-between gap-2 mb-1">
+                                <span className="font-bold text-amber-900 font-cairo">
+                                  {r.rowNumber ? `الصف ${r.rowNumber} في الإكسل` : `سجل #${idx + 1}`}
+                                </span>
+                                <span className="text-[11px] px-2 py-0.5 rounded-md bg-amber-100 text-amber-900 font-semibold">
+                                  {r.status || 'تخطي'}
+                                </span>
+                              </div>
+                              <p className="text-slate-700 m-0 leading-relaxed">
+                                {r.reason || `تم تخطي الصف: ${r.sid} - ${r.name}`}
+                              </p>
+                              {(r.sid && r.sid !== '—') && (
+                                <div className="text-[11px] text-slate-500 mt-1">
+                                  كود الطالب: <span className="font-mono font-bold text-slate-700">{r.sid}</span> | الاسم: {r.name || 'غير محدد'}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
             </div>
           )}

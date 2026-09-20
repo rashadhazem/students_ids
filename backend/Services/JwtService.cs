@@ -24,7 +24,17 @@ namespace BuaStudentApi.Services
 
         public string GenerateToken(User user)
         {
-            var secret = _config["Jwt:SecretKey"] ?? "bua_university_super_secret_jwt_key_2026_assiut_egypt";
+            var secret = Environment.GetEnvironmentVariable("JWT_SECRET_KEY") 
+                ?? _config["Jwt:SecretKey"] 
+                ?? "BUA_Enterprise_Ultra_Secure_Secret_Key_2025_Long_Enough_256_Bits!";
+            var issuer = Environment.GetEnvironmentVariable("JWT_ISSUER") 
+                ?? _config["Jwt:Issuer"] 
+                ?? "BuaStudentApi";
+            var audience = Environment.GetEnvironmentVariable("JWT_AUDIENCE") 
+                ?? _config["Jwt:Audience"] 
+                ?? "BuaStudentApp";
+            var expirationHours = _config.GetValue<int?>("Jwt:ExpirationHours") ?? 24;
+
             var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(secret));
             var credentials = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);
 
@@ -40,10 +50,10 @@ namespace BuaStudentApi.Services
             };
 
             var token = new JwtSecurityToken(
-                issuer: _config["Jwt:Issuer"] ?? "BuaStudentApi",
-                audience: _config["Jwt:Audience"] ?? "BuaStudentApp",
+                issuer: issuer,
+                audience: audience,
                 claims: claims,
-                expires: DateTime.UtcNow.AddHours(8),
+                expires: DateTime.UtcNow.AddHours(expirationHours),
                 signingCredentials: credentials);
 
             return new JwtSecurityTokenHandler().WriteToken(token);

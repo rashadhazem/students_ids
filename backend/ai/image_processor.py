@@ -1,0 +1,818 @@
+import os
+import io
+import re
+import shutil
+import logging
+from datetime import datetime
+import numpy as np
+import cv2
+from PIL import Image, ImageOps
+from dotenv import load_dotenv
+
+load_dotenv()
+logger = logging.getLogger(__name__)
+
+try:
+    from gdrive_helper import upload_to_gdrive, archive_in_gdrive, move_student_in_gdrive, is_gdrive_configured
+except ImportError:
+    upload_to_gdrive = lambda *a, **kw: False
+    archive_in_gdrive = lambda *a, **kw: False
+    move_student_in_gdrive = lambda *a, **kw: False
+    is_gdrive_configured = lambda: False
+
+TARGET_W = 400
+TARGET_H = 500
+JPEG_Q = 88  # output quality
+
+# ── Image Security & Decompression Bomb Protection ───────────────────────────
+Image.MAX_IMAGE_PIXELS = 25_000_000
+
+def validate_image_magic_bytes(data: bytes) -> tuple[bool, str]:
+    """Validate that the byte stream starts with valid JPEG or PNG magic numbers."""
+    if not data or len(data) < 8:
+        return False, "الملف المرفوع فارغ أو تالف"
+    # JPEG magic: \xff\xd8\xff
+    if data.startswith(b"\xff\xd8\xff"):
+        return True, "image/jpeg"
+    # PNG magic: \x89PNG\r\n\x1a\n
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return True, "image/png"
+    return False, "نوع الملف غير صالح. يُسمح فقط بملفات الصور الحقيقية (JPEG / PNG)"
+
+# OpenCV face detection cascades & Deep Learning YuNet
+_CASCADES = []
+try:
+    _CASCADE_PATHS = [
+        cv2.data.haarcascades + "haarcascade_frontalface_default.xml",
+        cv2.data.haarcascades + "haarcascade_frontalface_alt2.xml",
+        cv2.data.haarcascades + "haarcascade_frontalface_alt.xml",
+        cv2.data.haarcascades + "haarcascade_profileface.xml",
+    ]
+    if hasattr(cv2, "CascadeClassifier"):
+        for path in _CASCADE_PATHS:
+            if os.path.exists(path):
+                cascade = cv2.CascadeClassifier(path)
+                if not cascade.empty():
+                    _CASCADES.append(cascade)
+except Exception:
+    pass
+
+import threading
+
+_YUNET_LOCAL = threading.local()
+_YUNET_MODEL_NAME = "face_detection_yunet_2023mar.onnx"
+_YUNET_MODEL_RESOLVED_PATH = None
+
+def _get_yunet_detector():
+    """Load or initialize OpenCV YuNet deep learning face detector per thread (Thread-Safe)."""
+    global _YUNET_MODEL_RESOLVED_PATH
+    if hasattr(_YUNET_LOCAL, "detector") and _YUNET_LOCAL.detector is not None:
+        return _YUNET_LOCAL.detector
+
+    if _YUNET_MODEL_RESOLVED_PATH is None:
+        candidate_paths = [
+            os.path.join(os.path.dirname(__file__), "models", _YUNET_MODEL_NAME),
+            os.path.join(os.path.dirname(__file__), _YUNET_MODEL_NAME),
+            os.path.join(os.getcwd(), "models", _YUNET_MODEL_NAME),
+            os.path.join(os.getcwd(), _YUNET_MODEL_NAME),
+        ]
+        for p in candidate_paths:
+            if os.path.exists(p) and os.path.getsize(p) > 100000:
+                _YUNET_MODEL_RESOLVED_PATH = p
+                break
+
+    if not _YUNET_MODEL_RESOLVED_PATH:
+        return None
+
+    try:
+        if hasattr(cv2, "FaceDetectorYN"):
+            _YUNET_LOCAL.detector = cv2.FaceDetectorYN.create(
+                _YUNET_MODEL_RESOLVED_PATH, "", (320, 320),
+                score_threshold=0.5,
+                nms_threshold=0.3,
+                top_k=5000
+            )
+            return _YUNET_LOCAL.detector
+    except Exception as e:
+        print(f"Warning: Failed to create thread-local YuNet detector from {_YUNET_MODEL_RESOLVED_PATH}: {e}")
+        _YUNET_LOCAL.detector = None
+
+    return None
+
+
+def _fix_exif_rotation(pil_img: Image.Image) -> Image.Image:
+    """Auto-rotate image based on EXIF orientation tag."""
+    try:
+        return ImageOps.exif_transpose(pil_img)
+    except Exception:
+        return pil_img
+
+
+def _bytes_to_cv(data: bytes) -> np.ndarray | None:
+    arr = np.frombuffer(data, np.uint8)
+    return cv2.imdecode(arr, cv2.IMREAD_COLOR)
+
+
+def _cv_to_bytes(img: np.ndarray, quality: int = JPEG_Q) -> bytes:
+    ok, buf = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, quality])
+    return bytes(buf) if ok else b""
+
+
+def _pil_to_bytes(img: Image.Image, quality: int = JPEG_Q) -> bytes:
+    buf = io.BytesIO()
+    img.convert("RGB").save(buf, format="JPEG", quality=quality, optimize=True)
+    return buf.getvalue()
+
+
+def _normalize_image_bytes(image_bytes: bytes) -> bytes:
+    """
+    Normalize image bytes so detection and cropping work on the same orientation.
+    """
+    pil = Image.open(io.BytesIO(image_bytes))
+    pil = _fix_exif_rotation(pil).convert("RGB")
+    return _pil_to_bytes(pil)
+
+
+def _non_max_suppression(boxes: list[tuple[int, int, int, int]], overlap_thresh: float = 0.3) -> list[tuple[int, int, int, int]]:
+    """
+    Apply Non-Maximum Suppression to eliminate overlapping bounding boxes for the same face.
+    boxes format: [(x, y, w, h), ...]
+    """
+    if not boxes:
+        return []
+
+    rects = []
+    for (x, y, w, h) in boxes:
+        rects.append([x, y, x + w, y + h, w * h])
+
+    rects = sorted(rects, key=lambda b: b[4], reverse=True)
+    picked = []
+
+    while rects:
+        current = rects.pop(0)
+        picked.append((current[0], current[1], current[2] - current[0], current[3] - current[1]))
+
+        remaining = []
+        for r in rects:
+            xx1 = max(current[0], r[0])
+            yy1 = max(current[1], r[1])
+            xx2 = min(current[2], r[2])
+            yy2 = min(current[3], r[3])
+
+            w_inter = max(0, xx2 - xx1)
+            h_inter = max(0, yy2 - yy1)
+            inter_area = w_inter * h_inter
+
+            min_area = min(current[4], r[4])
+            iou = inter_area / float(current[4] + r[4] - inter_area) if (current[4] + r[4] - inter_area) > 0 else 0
+            overlap_smaller = inter_area / float(min_area) if min_area > 0 else 0
+
+            if iou < overlap_thresh and overlap_smaller < 0.5:
+                remaining.append(r)
+        rects = remaining
+
+    return picked
+
+
+def detect_faces_detailed(image_bytes: bytes = None, cv_img: np.ndarray = None) -> list[dict]:
+    """
+    Detect human faces with high accuracy.
+    Uses YuNet DNN as primary detector (accurate across angles, lighting, distances).
+    Falls back to multi-scale Haar Cascades with CLAHE.
+    Returns list of dicts:
+    [{'box': (x, y, w, h), 'eyes': (eye_cx, eye_cy), 'score': float}, ...]
+    Supports receiving pre-decoded cv_img to eliminate redundant decode passes.
+    """
+    if cv_img is None:
+        if not image_bytes:
+            return []
+        normalized_bytes = _normalize_image_bytes(image_bytes)
+        cv_img = _bytes_to_cv(normalized_bytes)
+    if cv_img is None:
+        return []
+
+    orig_h, orig_w = cv_img.shape[:2]
+
+    # 1. Try YuNet deep learning face detector first
+    yunet = _get_yunet_detector()
+    if yunet is not None:
+        try:
+            max_dim = 1280
+            scale = 1.0
+            det_img = cv_img
+            if max(orig_h, orig_w) > max_dim:
+                scale = max_dim / float(max(orig_h, orig_w))
+                det_img = cv2.resize(cv_img, (int(orig_w * scale), int(orig_h * scale)), interpolation=cv2.INTER_AREA)
+
+            det_h, det_w = det_img.shape[:2]
+            yunet.setInputSize((det_w, det_h))
+            _, faces = yunet.detect(det_img)
+
+            if faces is not None and len(faces) > 0:
+                results = []
+                inv_scale = 1.0 / scale
+                for f in faces:
+                    score = float(f[-1])
+                    if score < 0.40:
+                        continue
+                    fx = int(f[0] * inv_scale)
+                    fy = int(f[1] * inv_scale)
+                    fw = int(f[2] * inv_scale)
+                    fh = int(f[3] * inv_scale)
+
+                    fx = max(0, min(fx, orig_w - 1))
+                    fy = max(0, min(fy, orig_h - 1))
+                    fw = max(1, min(fw, orig_w - fx))
+                    fh = max(1, min(fh, orig_h - fy))
+
+                    re_x, re_y = f[4] * inv_scale, f[5] * inv_scale
+                    le_x, le_y = f[6] * inv_scale, f[7] * inv_scale
+                    eye_cx = (re_x + le_x) / 2.0
+                    eye_cy = (re_y + le_y) / 2.0
+
+                    results.append({
+                        "box": (fx, fy, fw, fh),
+                        "eyes": (eye_cx, eye_cy),
+                        "score": score,
+                    })
+
+                if results:
+                    return results
+        except Exception as e:
+            logger.warning(f"YuNet detection failed, falling back to Haar: {e}")
+
+    # 2. Fallback to OpenCV Haar cascades with CLAHE enhancement
+    if not _CASCADES:
+        return []
+
+    max_dim = 1000
+    scale_x, scale_y = 1.0, 1.0
+    det_img = cv_img
+    if max(orig_h, orig_w) > max_dim:
+        sc = max_dim / float(max(orig_h, orig_w))
+        det_img = cv2.resize(cv_img, (int(orig_w * sc), int(orig_h * sc)), interpolation=cv2.INTER_AREA)
+        det_h, det_w = det_img.shape[:2]
+        scale_x = orig_w / float(det_w)
+        scale_y = orig_h / float(det_h)
+
+    gray = cv2.cvtColor(det_img, cv2.COLOR_BGR2GRAY)
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    gray = clahe.apply(gray)
+
+    all_detected = []
+    for idx, cascade in enumerate(_CASCADES):
+        detected = cascade.detectMultiScale(
+            gray, scaleFactor=1.08, minNeighbors=4, minSize=(20, 20)
+        )
+        if len(detected) > 0:
+            scaled = [(int(x * scale_x), int(y * scale_y), int(w * scale_x), int(h * scale_y))
+                      for (x, y, w, h) in detected]
+            all_detected.extend(scaled)
+            if idx == 0 and len(detected) == 1:
+                break
+
+    nms_boxes = _non_max_suppression(all_detected)
+    return [
+        {
+            "box": b,
+            "eyes": (b[0] + b[2] / 2.0, b[1] + b[3] * 0.35),
+            "score": 0.8,
+        }
+        for b in nms_boxes
+    ]
+
+
+def detect_faces(image_bytes: bytes) -> list[tuple[int, int, int, int]]:
+    """
+    Return list of (x, y, w, h) face rectangles. Backward-compatible.
+    """
+    detailed = detect_faces_detailed(image_bytes)
+    return [f["box"] for f in detailed]
+
+
+def count_faces(image_bytes: bytes) -> int:
+    """Return total number of distinct human faces detected in the image."""
+    return len(detect_faces(image_bytes))
+
+
+def validate_single_person(image_bytes: bytes) -> tuple[bool, str, list]:
+    """
+    Validate that the uploaded image contains strictly ONE person/face.
+    Returns (is_valid: bool, message: str, faces: list).
+    """
+    try:
+        faces = detect_faces_detailed(image_bytes)
+        count = len(faces)
+        if count == 0:
+            return (
+                False,
+                "لم يتم اكتشاف أي وجه بشري واضح في الصورة. يرجى رفع صورة شخصية واضحة تركز على الوجه.",
+                [],
+            )
+        elif count > 1:
+            return (
+                False,
+                f"تحتوي الصورة على أكثر من شخص ({count} أشخاص). يجب أن تحتوي الصورة على شخص واحد فقط.",
+                faces,
+            )
+        return True, "تم التحقق من الصورة بنجاح (شخص واحد).", faces
+    except Exception as e:
+        return False, f"حدث خطأ أثناء معالجة فحص الصورة: {e}", []
+
+
+def face_detected(image_bytes: bytes) -> bool:
+    """Check if at least one face is detected."""
+    return len(detect_faces(image_bytes)) > 0
+
+
+def smart_crop_face(
+    image_bytes: bytes = None,
+    faces: list = None,
+    pil_img: Image.Image = None,
+    return_pil: bool = False,
+    zoom: float = 1.0,
+    offset_x: float = 0.0,
+    offset_y: float = 0.0,
+) -> bytes | Image.Image:
+    """
+    Auto-crop image into a professional ID card / passport portrait:
+    - Focuses strictly on the person's head, face, and shoulders (head & shoulders portrait).
+    - Eliminates lower body, torso, and wide background.
+    - Preserves entire head, hair, headwear, chin, neck and shoulders without clipping.
+    - Guarantees exact 4:5 aspect ratio (400x500 pixels) with 100% frame fill.
+    """
+    if pil_img is None:
+        if not image_bytes:
+            return b"" if not return_pil else None
+        normalized_bytes = _normalize_image_bytes(image_bytes)
+        pil = Image.open(io.BytesIO(normalized_bytes)).convert("RGB")
+    else:
+        pil = pil_img
+
+    iw, ih = pil.size
+    target_ar = TARGET_W / TARGET_H  # 400 / 500 = 0.8
+
+    # If faces not provided, get detailed face detections
+    if faces is None:
+        if pil_img is not None:
+            cv_img = cv2.cvtColor(np.array(pil), cv2.COLOR_RGB2BGR)
+            faces = detect_faces_detailed(cv_img=cv_img)
+        else:
+            faces = detect_faces_detailed(normalized_bytes)
+    elif faces and isinstance(faces[0], (list, tuple)):
+        # Convert legacy (x, y, w, h) tuples to detailed dicts
+        faces = [
+            {
+                "box": f,
+                "eyes": (f[0] + f[2] / 2.0, f[1] + f[3] * 0.35),
+                "score": 0.9,
+            }
+            for f in faces
+        ]
+
+    if faces:
+        # Select the most prominent face
+        best = max(faces, key=lambda r: r["box"][2] * r["box"][3])
+        fx, fy, fw, fh = best["box"]
+        eye_cx, eye_cy = best.get("eyes", (fx + fw / 2.0, fy + fh * 0.35))
+
+        # Anatomical boundaries of head:
+        # Top of skull / hair / hijab is ~35% of fh above fy
+        # Chin / jawline is ~10% of fh below fy + fh
+        head_top = max(0, fy - int(fh * 0.35))
+        chin_bottom = min(ih, fy + fh + int(fh * 0.10))
+        head_height = max(1, chin_bottom - head_top)
+
+        # Professional ID / Passport standard (Head & Shoulders):
+        # Base head fraction of 0.63 ensures close-up focus on face and shoulders
+        desired_head_fraction = min(0.75, max(0.48, 0.63 * zoom))
+        ideal_crop_h = int(head_height / desired_head_fraction)
+
+        # Ensure crop fits the image
+        crop_h = min(ih, ideal_crop_h)
+        crop_w = int(crop_h * target_ar)
+
+        # If crop_w exceeds image width, shrink crop proportionally
+        if crop_w > iw:
+            crop_w = iw
+            crop_h = int(crop_w / target_ar)
+
+        # Horizontal centering: Center strictly on the eye midpoint / face center
+        left = int(eye_cx - crop_w / 2.0 + (offset_x * crop_w * 0.25 if offset_x else 0))
+        left = max(0, min(left, iw - crop_w))
+
+        # Vertical placement:
+        # Standard composition: Eyes should sit at ~38% from top of crop frame
+        target_top = int(eye_cy - crop_h * 0.38 + (offset_y * crop_h * 0.25 if offset_y else 0))
+
+        # Headroom safety: guarantee skull top is below top of crop frame by at least 5%
+        headroom_limit = head_top - int(crop_h * 0.05)
+        if target_top > headroom_limit:
+            target_top = headroom_limit
+
+        # Chin clearance: guarantee chin is above bottom by at least 15% (ensuring shoulders are visible)
+        chin_limit = chin_bottom + int(crop_h * 0.15) - crop_h
+        if target_top < chin_limit:
+            target_top = chin_limit
+
+        # Clamp strictly within image bounds
+        top = max(0, min(target_top, ih - crop_h))
+
+    else:
+        # Fallback when no face detected: focus on upper portrait portion (bust/head area)
+        if iw / float(ih) > target_ar:
+            crop_h = ih
+            crop_w = int(ih * target_ar)
+            left = (iw - crop_w) // 2
+            top = 0
+        else:
+            crop_h = min(ih, int(ih * 0.45))
+            crop_w = int(crop_h * target_ar)
+            if crop_w > iw:
+                crop_w = iw
+                crop_h = int(crop_w / target_ar)
+            left = (iw - crop_w) // 2
+            top = max(0, min(int(ih * 0.05), ih - crop_h))
+
+    # Crop and high-quality resize to exact target dimensions (400x500)
+    cropped = pil.crop((left, top, left + crop_w, top + crop_h))
+    resized = cropped.resize((TARGET_W, TARGET_H), Image.LANCZOS)
+    if return_pil:
+        return resized
+    return _pil_to_bytes(resized)
+
+
+def apply_edits(
+    image_bytes: bytes,
+    rotation: int = 0,
+    flip_h: bool = False,
+    zoom: float = 1.0,
+    offset_x: float = 0.0,
+    offset_y: float = 0.0,
+    auto_crop: bool = True,
+    faces: list = None,
+    enforce_single_face: bool = True,
+) -> bytes:
+    """
+    Apply transforms (rotation, flip) and crop:
+    - If auto_crop is True: smart_crop_face is executed directly on the oriented image,
+      centering on the face with zoom and offset adjustments.
+    - If auto_crop is False: applies manual canvas pan & zoom coordinates.
+    - If enforce_single_face is True: validates that the photo contains strictly 1 human face.
+    """
+    pil = Image.open(io.BytesIO(image_bytes))
+    pil = _fix_exif_rotation(pil).convert("RGB")
+
+    if flip_h:
+        pil = pil.transpose(Image.FLIP_LEFT_RIGHT)
+
+    if rotation:
+        pil = pil.rotate(-rotation, expand=True)
+
+    if enforce_single_face:
+        if faces is None:
+            cv_img = cv2.cvtColor(np.array(pil), cv2.COLOR_RGB2BGR)
+            faces = detect_faces_detailed(cv_img=cv_img)
+        count = len(faces) if faces else 0
+        if count == 0:
+            raise ValueError("لم يتم اكتشاف أي شخص في الصورة. يرجى رفع صورة واضحة تظهر ملامح الوجه.")
+        elif count > 1:
+            raise ValueError(f"تم اكتشاف أكثر من شخص في الصورة ({count} أشخاص). يجب أن تحتوي صورة البطاقة على شخص واحد فقط.")
+
+    if auto_crop:
+        # Directly pass oriented full image to smart_crop_face with face-centered zoom & offset
+        return smart_crop_face(pil_img=pil, faces=faces, zoom=zoom, offset_x=offset_x, offset_y=offset_y)
+
+    # Manual crop handling when auto_crop is False
+    iw, ih = pil.size
+    new_w = max(1, int(iw / max(0.1, zoom)))
+    new_h = max(1, int(ih / max(0.1, zoom)))
+    cx = iw // 2 + int(offset_x * iw * 0.5)
+    cy = ih // 2 + int(offset_y * ih * 0.5)
+    left = max(0, min(cx - new_w // 2, iw - new_w))
+    top = max(0, min(cy - new_h // 2, ih - new_h))
+    pil = pil.crop((left, top, left + new_w, top + new_h))
+
+    target_ar = TARGET_W / TARGET_H
+    iw, ih = pil.size
+    if iw / float(ih) > target_ar:
+        crop_w = int(ih * target_ar)
+        crop_h = ih
+        left = (iw - crop_w) // 2
+        top = 0
+    else:
+        crop_h = min(ih, int(iw / target_ar))
+        crop_w = int(crop_h * target_ar)
+        left = (iw - crop_w) // 2
+        top = max(0, min(int((ih - crop_h) * 0.15), ih - crop_h))
+    cropped = pil.crop((left, top, left + crop_w, top + crop_h))
+    resized = cropped.resize((TARGET_W, TARGET_H), Image.LANCZOS)
+    return _pil_to_bytes(resized)
+
+
+def process_and_validate_photo(
+    raw_bytes: bytes,
+    rotation: int = 0,
+    flip_h: bool = False,
+    zoom: float = 1.0,
+    offset_x: float = 0.0,
+    offset_y: float = 0.0,
+    auto_crop: bool = True,
+) -> tuple[bool, str, bytes | None]:
+    """
+    True single-pass image processor and face validator.
+    Applies user canvas adjustments, converts directly in-memory to OpenCV BGR,
+    detects face ONCE, verifies strictly 1 person, performs smart crop on the same
+    PIL Image, and encodes ONCE to JPEG.
+    """
+    try:
+        # 1. Single decode: apply user edits
+        pil = Image.open(io.BytesIO(raw_bytes))
+        pil = _fix_exif_rotation(pil).convert("RGB")
+        if flip_h:
+            pil = pil.transpose(Image.FLIP_LEFT_RIGHT)
+        if rotation:
+            pil = pil.rotate(-rotation, expand=True)
+
+        has_manual_pan_zoom = (zoom != 1.0 or offset_x != 0.0 or offset_y != 0.0)
+        if has_manual_pan_zoom:
+            iw, ih = pil.size
+            new_w = max(1, int(iw / zoom))
+            new_h = max(1, int(ih / zoom))
+            cx = iw // 2 + int(offset_x * iw * 0.5)
+            cy = ih // 2 + int(offset_y * ih * 0.5)
+            left = max(0, min(cx - new_w // 2, max(0, iw - new_w)))
+            top = max(0, min(cy - new_h // 2, max(0, ih - new_h)))
+            pil = pil.crop((left, top, left + new_w, top + new_h))
+
+        # In-memory conversion from PIL RGB to OpenCV BGR (Zero disk, Zero encode/decode)
+        cv_img = cv2.cvtColor(np.array(pil), cv2.COLOR_RGB2BGR)
+
+        # 2. Face detection using deep YuNet + multi-scale cascades directly on cv_img
+        faces = detect_faces_detailed(cv_img=cv_img)
+        count = len(faces)
+        if count == 0:
+            return False, "لم يتم اكتشاف أي وجه بشري واضح في الصورة. يرجى رفع صورة شخصية واضحة تركز على الوجه.", None
+        if count > 1:
+            return False, f"تحتوي الصورة على أكثر من شخص ({count} أشخاص). يجب أن تحتوي الصورة على شخص واحد فقط.", None
+
+        # 3. Smart crop to face: single in-memory crop and single encode
+        if auto_crop or not has_manual_pan_zoom:
+            cropped_pil = smart_crop_face(pil_img=pil, faces=faces, return_pil=True)
+        else:
+            target_ar = TARGET_W / TARGET_H
+            iw, ih = pil.size
+            if iw / float(ih) > target_ar:
+                crop_w = int(ih * target_ar)
+                crop_h = ih
+                left = (iw - crop_w) // 2
+                top = 0
+            else:
+                crop_h = min(ih, int(iw / target_ar))
+                crop_w = int(crop_h * target_ar)
+                left = (iw - crop_w) // 2
+                top = max(0, min(int((ih - crop_h) * 0.15), ih - crop_h))
+            cropped = pil.crop((left, top, left + crop_w, top + crop_h))
+            cropped_pil = cropped.resize((TARGET_W, TARGET_H), Image.LANCZOS)
+
+        final_bytes = _pil_to_bytes(cropped_pil)
+        return True, "تم التحقق من الصورة بنجاح (شخص واحد).", final_bytes
+
+    except Exception as e:
+        logger.error(f"Error processing image: {e}")
+        return False, "حدث خطأ أثناء معالجة الصورة. يرجى التأكد من صلاحية الملف والمحاولة مرة أخرى.", None
+
+
+def _college_folder(college: str) -> str:
+    """Return a safe folder name for the college (Arabic-friendly, spaces→underscore)."""
+    safe = re.sub(r'[\s/\\:*?"<>|]+', "_", college.strip())
+    return safe.rstrip("_") or "عام"
+
+
+def save_image(
+    image_bytes: bytes, student_id: str, year: str, college: str, upload_root: str, skip_validation: bool = True
+) -> dict:
+    """
+    Save processed image directly to local VPS storage.
+    Path: uploads/{year}/{college}/{student_id}.jpg
+    Returns { "path": relative_path, "url": public_url }
+    """
+    if not skip_validation:
+        is_valid, msg, _ = validate_single_person(image_bytes)
+        if not is_valid:
+            raise ValueError(msg)
+
+    safe_sid = re.sub(r'[^a-zA-Z0-9_-]', '', str(student_id).strip())
+    if not safe_sid:
+        raise ValueError("Invalid student ID format for image filename")
+
+    safe_year = re.sub(r'[^0-9]', '', str(year).strip())[:4] or "general"
+    col_folder = _college_folder(college)
+
+    year_folder = os.path.join(upload_root, safe_year)
+    os.makedirs(year_folder, exist_ok=True)
+
+    college_folder = os.path.join(year_folder, col_folder)
+    os.makedirs(college_folder, exist_ok=True)
+
+    filename = f"{safe_sid}.jpg"
+    full_path = os.path.join(college_folder, filename)
+
+    # Strict containment check against path traversal
+    real_root = os.path.realpath(upload_root)
+    real_full = os.path.realpath(full_path)
+    if not real_full.startswith(real_root + os.sep) and real_full != real_root:
+        raise ValueError("Path traversal attempt detected in save_image")
+
+    with open(full_path, "wb") as f:
+        f.write(image_bytes)
+
+    # Optional background sync to Google Drive (managed by worker pool)
+    if os.getenv("ENABLE_GDRIVE_SYNC", "false").lower() == "true":
+        try:
+            from background_worker import submit_async_gdrive_sync
+            submit_async_gdrive_sync(image_bytes, year, college, filename)
+        except Exception:
+            try:
+                if is_gdrive_configured():
+                    import threading
+                    threading.Thread(
+                        target=upload_to_gdrive,
+                        args=(image_bytes, year, college, filename),
+                        daemon=True
+                    ).start()
+            except Exception as e:
+                print(f"[GDrive Async] Upload dispatch error: {e}")
+
+    rel_path = os.path.relpath(full_path, os.path.join(upload_root, "..")).replace(
+        "\\", "/"
+    )
+    return {"path": rel_path, "url": f"/static/{rel_path}"}
+
+
+def _extract_year_and_college(path: str) -> tuple[str, str] | tuple[None, None]:
+    parts = path.replace("\\", "/").split("/")
+    for i, part in enumerate(parts):
+        if re.match(r"^\d{4}$", part):
+            if i + 1 < len(parts):
+                return part, parts[i+1]
+    return None, None
+
+
+def archive_old_image(
+    old_rel_path: str, student_id: str, static_root: str, upload_root: str
+) -> str | None:
+    """
+    Move old image to old/ subdirectory.
+    Also archives the old photo on Google Drive asynchronously.
+    Only keeps one old photo ({student_id}_old.jpg) in the old folder.
+    Returns new relative path or None if file not found.
+    """
+    if not old_rel_path:
+        return None
+
+    old_full_path = os.path.join(static_root, old_rel_path)
+    if not os.path.exists(old_full_path):
+        return None
+
+    year, college = _extract_year_and_college(old_rel_path)
+    old_filename = f"{student_id}_old.jpg"
+
+    # Mirror archive to Google Drive asynchronously (keeps only one old photo per student)
+    try:
+        if is_gdrive_configured() and year and college:
+            try:
+                from background_worker import submit_async_gdrive_archive
+                submit_async_gdrive_archive(student_id, year, college, old_filename)
+            except Exception:
+                archive_in_gdrive(student_id, year, college, old_filename)
+    except Exception as e:
+        print(f"[GDrive] Failed to archive old image: {e}")
+
+    # Create old/ subdirectory in the same local directory as the image
+    image_dir = os.path.dirname(old_full_path)
+    old_dir = os.path.join(image_dir, "old")
+    os.makedirs(old_dir, exist_ok=True)
+
+    new_full_path = os.path.join(old_dir, old_filename)
+
+    try:
+        # Clean up any legacy or existing old photos for this student in local old/ folder
+        for fname in os.listdir(old_dir):
+            if fname.startswith(f"{student_id}_old"):
+                legacy_file = os.path.join(old_dir, fname)
+                try:
+                    os.remove(legacy_file)
+                except Exception:
+                    pass
+
+        shutil.move(old_full_path, new_full_path)
+        rel_path = os.path.relpath(new_full_path, static_root).replace("\\", "/")
+        return rel_path
+    except Exception as e:
+        print(f"Error archiving image: {e}")
+        return None
+
+
+def move_student_images_locally(
+    old_rel_path: str,
+    old_student_id: str,
+    old_year: str,
+    old_college: str,
+    new_student_id: str,
+    new_year: str,
+    new_college: str,
+    static_root: str,
+    upload_root: str,
+) -> str | None:
+    """
+    Move a student's active image and any old archived image from:
+      uploads/{old_year}/{old_college}/{old_student_id}.jpg
+    to:
+      uploads/{new_year}/{new_college}/{new_student_id}.jpg
+    Also moves/mirrors the move in Google Drive.
+    Returns the new relative path (e.g. 'uploads/2023/كلية_الصيدلة/2023006972.jpg') or None.
+    """
+    # 1. First trigger Google Drive move if configured
+    try:
+        if is_gdrive_configured() and old_year and old_college and new_year and new_college:
+            move_student_in_gdrive(
+                str(old_student_id),
+                str(old_year),
+                str(old_college),
+                str(new_student_id),
+                str(new_year),
+                str(new_college),
+            )
+    except Exception as e:
+        print(f"[GDrive] Failed to move student in Google Drive: {e}")
+
+    # 2. Target paths locally
+    new_col_folder = _college_folder(new_college)
+    new_dir = os.path.join(upload_root, str(new_year), new_col_folder)
+    os.makedirs(new_dir, exist_ok=True)
+    new_file_path = os.path.join(new_dir, f"{new_student_id}.jpg")
+    new_rel_path = os.path.relpath(new_file_path, static_root).replace("\\", "/")
+
+    # 3. Locate old file
+    old_full_path = os.path.join(static_root, old_rel_path) if old_rel_path else None
+    old_col_folder = _college_folder(old_college) if old_college else ""
+    fallback_old = (
+        os.path.join(upload_root, str(old_year), old_col_folder, f"{old_student_id}.jpg")
+        if old_year and old_col_folder
+        else None
+    )
+
+    src_file = None
+    if old_full_path and os.path.exists(old_full_path):
+        src_file = old_full_path
+    elif fallback_old and os.path.exists(fallback_old):
+        src_file = fallback_old
+
+    if src_file:
+        try:
+            if os.path.abspath(src_file) != os.path.abspath(new_file_path):
+                # If target already exists, remove it first
+                if os.path.exists(new_file_path):
+                    try:
+                        os.remove(new_file_path)
+                    except Exception:
+                        pass
+                shutil.move(src_file, new_file_path)
+                try:
+                    print(f"[Storage] Moved student image to {new_file_path}")
+                except Exception:
+                    pass
+        except Exception as e:
+            try:
+                print(f"Error moving student active image locally: {e}")
+            except Exception:
+                pass
+
+        # 4. Check for and move archived old photo in old/
+        src_dir = os.path.dirname(src_file)
+        old_archive_dir = os.path.join(src_dir, "old")
+        if os.path.exists(old_archive_dir):
+            old_archive_file = os.path.join(old_archive_dir, f"{old_student_id}_old.jpg")
+            if os.path.exists(old_archive_file):
+                new_archive_dir = os.path.join(new_dir, "old")
+                os.makedirs(new_archive_dir, exist_ok=True)
+                new_archive_file = os.path.join(new_archive_dir, f"{new_student_id}_old.jpg")
+                try:
+                    if os.path.exists(new_archive_file):
+                        try:
+                            os.remove(new_archive_file)
+                        except Exception:
+                            pass
+                    shutil.move(old_archive_file, new_archive_file)
+                    try:
+                        print(f"[Storage] Moved student archive image to {new_archive_file}")
+                    except Exception:
+                        pass
+                except Exception as e:
+                    try:
+                        print(f"Error moving student archived image locally: {e}")
+                    except Exception:
+                        pass
+
+    return new_rel_path

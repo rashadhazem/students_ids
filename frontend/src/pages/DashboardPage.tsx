@@ -14,7 +14,9 @@ interface DashboardStats {
     studentId: string;
     fullName: string;
     college: string;
-    year: string;
+    year?: string;
+    email?: string;
+    mobile?: string;
     imagePath?: string;
     createdAt?: string;
   }>;
@@ -292,10 +294,10 @@ export const DashboardPage: React.FC = () => {
               <thead>
                 <tr>
                   <th>الصورة</th>
-                  <th>الرقم الجامعي</th>
                   <th>الاسم الكامل</th>
+                  <th>البريد الإلكتروني</th>
+                  <th>رقم التليفون</th>
                   <th>الكلية</th>
-                  <th>السنة</th>
                   <th>إجراء</th>
                 </tr>
               </thead>
@@ -313,15 +315,15 @@ export const DashboardPage: React.FC = () => {
                           }}
                         />
                       </td>
-                      <td>
-                        <span className="student-id-badge">{s.studentId}</span>
-                      </td>
                       <td className="font-bold text-navy">{s.fullName}</td>
+                      <td className="text-muted text-xs font-mono" dir="ltr">
+                        {s.email || '–'}
+                      </td>
+                      <td className="text-muted text-xs font-mono" dir="ltr">
+                        {s.mobile || '–'}
+                      </td>
                       <td>
                         <span className="college-tag">{s.college}</span>
-                      </td>
-                      <td>
-                        <span className="year-tag">{s.year}</span>
                       </td>
                       <td>
                         <Link
@@ -359,9 +361,9 @@ export const DashboardPage: React.FC = () => {
               <span className="font-mono font-bold">متصل وفعال (HTTP 200)</span>
             </div>
 
-            <div className="flex items-center justify-between p-2.5 rounded-lg bg-blue-50 border border-blue-200 text-blue">
+            <div className="flex items-center justify-between p-2.5 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800">
               <span className="font-bold">قاعدة البيانات:</span>
-              <span className="font-mono">SQLite (bua_students.db)</span>
+              <span className="font-mono font-bold">PostgreSQL 16 (bua_db) ✓</span>
             </div>
 
             <div className="flex items-center justify-between p-2.5 rounded-lg bg-amber-50 border border-amber-200 text-amber-900">

@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { ChangePasswordModal } from './ChangePasswordModal';
+import { AdminProfileModal } from './AdminProfileModal';
 
 interface SidebarProps {
   isOpen?: boolean;
@@ -12,6 +13,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const [showChangePw, setShowChangePw] = useState(false);
+  const [showProfileModal, setShowProfileModal] = useState(false);
 
   const role = user?.role?.toLowerCase() || '';
 
@@ -182,6 +184,24 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
             </div>
           )}
 
+          {['superadmin', 'admin', 'staff', 'officer'].includes(role) && (
+            <button
+              type="button"
+              onClick={() => setShowProfileModal(true)}
+              className="btn-logout mb-2 cursor-pointer"
+              style={{
+                background: 'rgba(232,184,75,.15)',
+                color: 'var(--gold2)',
+                borderColor: 'rgba(232,184,75,.35)'
+              }}
+            >
+              <svg viewBox="0 0 24 24" className="w-4 h-4 fill-current">
+                <path d="M12 12c2.21 0 4-1.79 4-4s-1.79-4-4-4-4 1.79-4 4 1.79 4 4 4zm0 2c-2.67 0-8 1.34-8 4v2h16v-2c0-2.66-5.33-4-8-4z" />
+              </svg>
+              <span>تعديل حسابي والبريد</span>
+            </button>
+          )}
+
           <button
             type="button"
             onClick={() => setShowChangePw(true)}
@@ -210,6 +230,12 @@ export const Sidebar: React.FC<SidebarProps> = ({ isOpen, onClose }) => {
           </button>
         </div>
       </aside>
+
+      {/* Global Admin Profile & Email Modal */}
+      <AdminProfileModal
+        isOpen={showProfileModal}
+        onClose={() => setShowProfileModal(false)}
+      />
 
       {/* Global Change Password Modal */}
       <ChangePasswordModal

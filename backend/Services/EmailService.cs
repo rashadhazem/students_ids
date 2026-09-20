@@ -30,11 +30,12 @@ namespace BuaStudentApi.Services
 
         public async Task SendEmailAsync(string to, string subject, string htmlContent)
         {
-            var server = _config["Mail:Server"] ?? "smtp.gmail.com";
-            var port = int.TryParse(_config["Mail:Port"], out var p) ? p : 587;
-            var username = _config["Mail:Username"];
-            var password = _config["Mail:Password"];
-            var from = _config["Mail:From"] ?? username ?? "noreply@bua.edu.eg";
+            var server = _config["Mail:Server"] ?? _config["EmailSettings:SmtpHost"] ?? "smtp.gmail.com";
+            var portStr = _config["Mail:Port"] ?? _config["EmailSettings:SmtpPort"];
+            var port = int.TryParse(portStr, out var p) ? p : 587;
+            var username = _config["Mail:Username"] ?? _config["EmailSettings:SmtpUser"];
+            var password = _config["Mail:Password"] ?? _config["EmailSettings:SmtpPass"];
+            var from = _config["Mail:From"] ?? _config["EmailSettings:SenderEmail"] ?? username ?? "noreply@bua.edu.eg";
 
             if (string.IsNullOrEmpty(username) || string.IsNullOrEmpty(password))
             {

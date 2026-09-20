@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
+import { useAuth } from '../context/AuthContext';
 import { apiClient } from '../api/client';
 
 export const BUA_COLLEGES = [
@@ -30,13 +31,22 @@ export const BUA_YEARS = [
 
 export const RegisterStudentPage: React.FC = () => {
   const navigate = useNavigate();
+  const { user } = useAuth();
+  const isSupervisor = user?.role?.toLowerCase() !== 'superadmin' && !!user?.college;
+
   const [fullName,    setFullName]    = useState('');
   const [studentId,   setStudentId]   = useState('');
   const [nationalId,  setNationalId]  = useState('');
-  const [college,     setCollege]     = useState(BUA_COLLEGES[0]);
+  const [college,     setCollege]     = useState(user?.college || BUA_COLLEGES[0]);
   const [year,        setYear]        = useState(BUA_YEARS[0]);
   const [email,       setEmail]       = useState('');
   const [phone,       setPhone]       = useState('');
+
+  useEffect(() => {
+    if (isSupervisor && user?.college) {
+      setCollege(user.college);
+    }
+  }, [user, isSupervisor]);
 
   const [selectedFile,   setSelectedFile]   = useState<File | null>(null);
   const [editorOpen,     setEditorOpen]     = useState(false);
@@ -136,7 +146,7 @@ export const RegisterStudentPage: React.FC = () => {
       fd.append('studentId',  sid);
       fd.append('fullName',   fullName.trim());
       fd.append('nationalId', nid);
-      fd.append('college',    college);
+      fd.append('college',    isSupervisor && user?.college ? user.college : college);
       fd.append('year',       year);
       if (email) fd.append('email', email.trim().toLowerCase());
       if (ph)    fd.append('phone', ph);
@@ -220,9 +230,21 @@ export const RegisterStudentPage: React.FC = () => {
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
                 <div className="bua-field mb-0">
                   <label>الكلية <span className="text-red-600">*</span></label>
-                  <select value={college} onChange={(e) => setCollege(e.target.value)} className="bua-select text-xs" required>
-                    {BUA_COLLEGES.map(c => <option key={c} value={c}>{c}</option>)}
-                  </select>
+                  {isSupervisor ? (
+                    <div>
+                      <input
+                        type="text"
+                        value={user?.college || college}
+                        disabled
+                        className="bua-input text-xs bg-slate-100 text-slate-700 cursor-not-allowed font-semibold border-slate-300"
+                      />
+                      <span className="text-[11px] text-blue-700 font-semibold mt-1 block">🔒 مقيد تلقائياً حسب كليتك المسندة ({user?.college})</span>
+                    </div>
+                  ) : (
+                    <select value={college} onChange={(e) => setCollege(e.target.value)} className="bua-select text-xs" required>
+                      {BUA_COLLEGES.map(c => <option key={c} value={c}>{c}</option>)}
+                    </select>
+                  )}
                 </div>
                 <div className="bua-field mb-0">
                   <label>الفرقة / السنة الدراسية <span className="text-red-600">*</span></label>

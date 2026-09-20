@@ -61,6 +61,27 @@ namespace BuaStudentApi.DTOs
         public string ConfirmPassword { get; set; } = string.Empty;
     }
 
+    public class UpdateProfileDto
+    {
+        [Required(ErrorMessage = "يرجى إدخال الاسم الكامل")]
+        public string FullName { get; set; } = string.Empty;
+
+        [Required(ErrorMessage = "يرجى إدخال البريد الإلكتروني")]
+        [EmailAddress(ErrorMessage = "صيغة البريد الإلكتروني غير صحيحة")]
+        public string Email { get; set; } = string.Empty;
+
+        public string? CurrentPassword { get; set; }
+        public string? NewPassword { get; set; }
+        public string? ConfirmNewPassword { get; set; }
+    }
+
+    public class ResendVerificationDto
+    {
+        [Required(ErrorMessage = "يرجى إدخال البريد الإلكتروني")]
+        [EmailAddress(ErrorMessage = "صيغة البريد الإلكتروني غير صحيحة")]
+        public string Email { get; set; } = string.Empty;
+    }
+
     public class ForgotPasswordDto
     {
         [Required(ErrorMessage = "يرجى إدخال البريد الإلكتروني")]

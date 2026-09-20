@@ -12,6 +12,7 @@ using BuaStudentApi.Data;
 using BuaStudentApi.DTOs;
 using BuaStudentApi.Models;
 using BuaStudentApi.Services;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.Extensions.Caching.Memory;
 
 namespace BuaStudentApi.Controllers
@@ -49,10 +50,11 @@ namespace BuaStudentApi.Controllers
         public async Task<IActionResult> GetStats()
         {
             var userRole = User.FindFirst(ClaimTypes.Role)?.Value;
-            var userCollege = User.FindFirst("college")?.Value;
+            var isSuperAdmin = string.Equals(userRole, "superadmin", StringComparison.OrdinalIgnoreCase);
+            var userCollege = User.FindFirst("college")?.Value ?? User.FindFirst("College")?.Value;
 
             var query = _db.Students.AsQueryable();
-            if (userRole?.ToLower() == "admin" && !string.IsNullOrEmpty(userCollege))
+            if (!isSuperAdmin && !string.IsNullOrEmpty(userCollege))
                 query = query.Where(s => s.College == userCollege);
 
             var total = await query.CountAsync();
@@ -72,6 +74,8 @@ namespace BuaStudentApi.Controllers
                     s.FullName,
                     s.College,
                     s.Year,
+                    Email = s.Email,
+                    Mobile = s.Mobile,
                     s.ImagePath,
                     createdAt = s.CreatedAt
                 })
@@ -111,13 +115,16 @@ namespace BuaStudentApi.Controllers
 
             if (hasPhoto.HasValue)
             {
-                query = hasPhoto.Value ? query.Where(s => !string.IsNullOrEmpty(s.ImagePath)) : query.Where(s => string.IsNullOrEmpty(s.ImagePath));
+                query = hasPhoto.Value
+                    ? query.Where(s => !string.IsNullOrEmpty(s.ImagePath) && !s.ImagePath.Contains("placeholder"))
+                    : query.Where(s => string.IsNullOrEmpty(s.ImagePath) || s.ImagePath.Contains("placeholder"));
             }
 
-            // College scoping for admin
+            // College scoping for admin / supervisor
             var userRole = User.FindFirst(ClaimTypes.Role)?.Value;
-            var userCollege = User.FindFirst("college")?.Value;
-            if (userRole == "admin" && !string.IsNullOrEmpty(userCollege))
+            var isSuperAdmin = string.Equals(userRole, "superadmin", StringComparison.OrdinalIgnoreCase);
+            var userCollege = User.FindFirst("college")?.Value ?? User.FindFirst("College")?.Value;
+            if (!isSuperAdmin && !string.IsNullOrEmpty(userCollege))
             {
                 query = query.Where(s => s.College == userCollege);
             }
@@ -178,6 +185,7 @@ namespace BuaStudentApi.Controllers
         [HttpGet("{studentId}")]
         [HttpGet("card/{studentId}")]
         [AllowAnonymous]
+        [ResponseCache(NoStore = true, Location = ResponseCacheLocation.None)]
         public async Task<IActionResult> GetStudentCard(string studentId)
         {
             studentId = studentId.Trim();
@@ -223,19 +231,23 @@ namespace BuaStudentApi.Controllers
 
             // Authorization check
             var userRole = User.FindFirst(ClaimTypes.Role)?.Value;
-            var userCollege = User.FindFirst("college")?.Value;
+            var isSuperAdmin = string.Equals(userRole, "superadmin", StringComparison.OrdinalIgnoreCase);
+            var userCollege = User.FindFirst("college")?.Value ?? User.FindFirst("College")?.Value;
             var myStudentId = User.FindFirst("student_id")?.Value;
 
-            if (userRole == "student" && myStudentId != studentId)
+            if (string.Equals(userRole, "student", StringComparison.OrdinalIgnoreCase) && myStudentId != studentId)
             {
                 return StatusCode(403, new { success = false, message = "غير مصرح: يمكنك استعراض بطاقتك الشخصية فقط" });
             }
-            if (userRole == "admin" && userCollege != studentDto.College)
+            if (!isSuperAdmin && !string.IsNullOrEmpty(userCollege) && studentDto.College != userCollege)
             {
-                return StatusCode(403, new { success = false, message = "غير مصرح: يمكنك استعراض طلاب كليتك فقط" });
+                return StatusCode(403, new { success = false, message = $"غير مصرح: يمكنك استعراض طلاب كلية {userCollege} فقط" });
             }
 
-            var canEdit = (userRole == "student" && myStudentId == studentId) || userRole == "superadmin" || userRole == "staff" || (userRole == "admin" && userCollege == studentDto.College);
+            var canEdit = (string.Equals(userRole, "student", StringComparison.OrdinalIgnoreCase) && myStudentId == studentId) ||
+                          isSuperAdmin ||
+                          string.Equals(userRole, "staff", StringComparison.OrdinalIgnoreCase) ||
+                          (!isSuperAdmin && !string.IsNullOrEmpty(userCollege) && userCollege == studentDto.College);
 
             return Ok(new
             {
@@ -261,14 +273,20 @@ namespace BuaStudentApi.Controllers
                 : (!string.IsNullOrWhiteSpace(dto.Code) ? (dto.Year.Trim() + dto.Code.Trim()) : $"202400{Random.Shared.Next(1000, 9999)}");
 
             var userRole = User.FindFirst(ClaimTypes.Role)?.Value;
-            var userCollege = User.FindFirst("college")?.Value;
+            var isSuperAdmin = string.Equals(userRole, "superadmin", StringComparison.OrdinalIgnoreCase);
+            var userCollege = User.FindFirst("college")?.Value ?? User.FindFirst("College")?.Value;
             var myStudentId = User.FindFirst("student_id")?.Value;
 
-            if (userRole == "student" && myStudentId != studentId)
+            if (string.Equals(userRole, "student", StringComparison.OrdinalIgnoreCase) && myStudentId != studentId)
                 return StatusCode(403, new { success = false, message = "يمكنك تسجيل بياناتك الشخصية فقط" });
 
-            if (userRole == "admin" && userCollege != dto.College)
-                return StatusCode(403, new { success = false, message = $"يمكنك تسجيل طلاب كلية {userCollege} فقط" });
+            if (!isSuperAdmin && !string.IsNullOrEmpty(userCollege))
+            {
+                if (!string.IsNullOrWhiteSpace(dto.College) && dto.College.Trim() != userCollege.Trim())
+                    return StatusCode(403, new { success = false, message = $"غير مصرح: يمكنك تسجيل طلاب كلية {userCollege} فقط ولا يمكنك إضافة طلاب لكليات أخرى" });
+
+                dto.College = userCollege;
+            }
 
             if (await _db.Students.AnyAsync(s => s.StudentId == studentId))
             {
@@ -295,9 +313,16 @@ namespace BuaStudentApi.Controllers
                     autoCrop = acVal == "1" || acVal == "true";
                 }
 
-                var processedBytes = await _photoService.ProcessPhotoAsync(rawBytes, zoom, rotation, flipH, offsetX, offsetY, autoCrop, HttpContext.RequestAborted);
-                var webRoot = _env.WebRootPath ?? Path.Combine(Directory.GetCurrentDirectory(), "wwwroot");
-                relativeImagePath = await _photoService.SavePhotoAsync(processedBytes, studentId, dto.Year, dto.College, webRoot);
+                try
+                {
+                    var processedBytes = await _photoService.ProcessPhotoAsync(rawBytes, zoom, rotation, flipH, offsetX, offsetY, autoCrop, HttpContext.RequestAborted);
+                    var webRoot = _env.WebRootPath ?? Path.Combine(Directory.GetCurrentDirectory(), "wwwroot");
+                    relativeImagePath = await _photoService.SavePhotoAsync(processedBytes, studentId, dto.Year, dto.College, webRoot);
+                }
+                catch (InvalidOperationException ex)
+                {
+                    return BadRequest(new { success = false, message = ex.Message });
+                }
             }
             else
             {
@@ -339,6 +364,17 @@ namespace BuaStudentApi.Controllers
             };
 
             _db.Students.Add(student);
+
+            _db.AuditLogs.Add(new AuditLog
+            {
+                UserId = registeredById,
+                Action = "REGISTER_STUDENT",
+                Target = student.StudentId,
+                Detail = $"تسجيل طالب جديد: {student.FullName} - {student.College}",
+                Ip = HttpContext.Connection.RemoteIpAddress?.ToString(),
+                CreatedAt = DateTime.UtcNow
+            });
+
             await _db.SaveChangesAsync();
 
             return Ok(new
@@ -350,13 +386,77 @@ namespace BuaStudentApi.Controllers
             });
         }
 
+        [HttpPut("{id}")]
+        [Authorize(Roles = "SuperAdmin,Admin,Officer,Staff,superadmin,admin,officer,staff")]
+        public async Task<IActionResult> UpdateStudent(int id, [FromBody] StudentEditDto dto)
+        {
+            var student = await _db.Students.FindAsync(id);
+            if (student == null)
+                return NotFound(new { success = false, message = "الطالب غير موجود" });
+
+            var userRole = User.FindFirst(ClaimTypes.Role)?.Value;
+            var isSuperAdmin = string.Equals(userRole, "superadmin", StringComparison.OrdinalIgnoreCase);
+            var userCollege = User.FindFirst("college")?.Value ?? User.FindFirst("College")?.Value;
+            var currentUserId = int.TryParse(User.FindFirst(ClaimTypes.NameIdentifier)?.Value, out var uid) ? uid : (int?)null;
+
+            // College supervisor restriction: can ONLY edit students in their college, CANNOT move student to another college
+            if (!isSuperAdmin && !string.IsNullOrEmpty(userCollege))
+            {
+                if (student.College != userCollege)
+                {
+                    return StatusCode(403, new { success = false, message = $"غير مصرح: يمكنك تعديل بيانات طلاب كلية {userCollege} فقط" });
+                }
+                if (!string.IsNullOrWhiteSpace(dto.College) && dto.College.Trim() != userCollege.Trim())
+                {
+                    return StatusCode(403, new { success = false, message = "غير مصرح: لا يمكنك تحويل الطالب إلى كلية أخرى" });
+                }
+                dto.College = userCollege;
+            }
+
+            student.FullName = !string.IsNullOrWhiteSpace(dto.FullName) ? dto.FullName.Trim() : student.FullName;
+            if (!string.IsNullOrWhiteSpace(dto.Year)) student.Year = dto.Year.Trim();
+            if (!string.IsNullOrWhiteSpace(dto.College)) student.College = dto.College.Trim();
+            if (dto.Section != null) student.Section = dto.Section.Trim();
+            if (!string.IsNullOrWhiteSpace(dto.NationalId)) student.NationalId = dto.NationalId.Trim();
+            if (!string.IsNullOrWhiteSpace(dto.Mobile)) student.Mobile = dto.Mobile.Trim();
+            if (!string.IsNullOrWhiteSpace(dto.Email)) student.Email = dto.Email.Trim().ToLowerInvariant();
+            student.UpdatedAt = DateTime.UtcNow;
+
+            _db.AuditLogs.Add(new AuditLog
+            {
+                UserId = currentUserId,
+                Action = "UPDATE_STUDENT",
+                Target = student.StudentId,
+                Detail = $"تعديل بيانات الطالب: {student.FullName} - {student.College}",
+                Ip = HttpContext.Connection.RemoteIpAddress?.ToString(),
+                CreatedAt = DateTime.UtcNow
+            });
+
+            await _db.SaveChangesAsync();
+
+            _cache.Remove($"card_{student.StudentId}");
+            _cache.Remove($"card_{student.StudentId.Trim()}");
+
+            return Ok(new { success = true, message = "تم تعديل بيانات الطالب بنجاح ✓" });
+        }
+
         [HttpDelete("{id}")]
-        [Authorize(Roles = "SuperAdmin,superadmin")]
+        [Authorize(Roles = "SuperAdmin,Admin,superadmin,admin")]
         public async Task<IActionResult> DeleteStudent(int id)
         {
             var student = await _db.Students.FindAsync(id);
             if (student == null)
                 return NotFound(new { success = false, message = "الطالب غير موجود" });
+
+            var userRole = User.FindFirst(ClaimTypes.Role)?.Value;
+            var isSuperAdmin = string.Equals(userRole, "superadmin", StringComparison.OrdinalIgnoreCase);
+            var userCollege = User.FindFirst("college")?.Value ?? User.FindFirst("College")?.Value;
+            var currentUserId = int.TryParse(User.FindFirst(ClaimTypes.NameIdentifier)?.Value, out var uid) ? uid : (int?)null;
+
+            if (!isSuperAdmin && !string.IsNullOrEmpty(userCollege) && student.College != userCollege)
+            {
+                return StatusCode(403, new { success = false, message = $"غير مصرح: يمكنك حذف طلاب كلية {userCollege} فقط" });
+            }
 
             var webRoot = _env.WebRootPath ?? Path.Combine(Directory.GetCurrentDirectory(), "wwwroot");
             var fullPath = Path.Combine(webRoot, student.ImagePath);
@@ -366,13 +466,28 @@ namespace BuaStudentApi.Controllers
             }
 
             _db.Students.Remove(student);
+
+            _db.AuditLogs.Add(new AuditLog
+            {
+                UserId = currentUserId,
+                Action = "DELETE_STUDENT",
+                Target = student.StudentId,
+                Detail = $"حذف بيانات الطالب: {student.FullName} - {student.College}",
+                Ip = HttpContext.Connection.RemoteIpAddress?.ToString(),
+                CreatedAt = DateTime.UtcNow
+            });
+
             await _db.SaveChangesAsync();
+
+            _cache.Remove($"card_{student.StudentId}");
+            _cache.Remove($"card_{student.StudentId.Trim()}");
 
             return Ok(new { success = true, message = "تم حذف الطالب بنجاح" });
         }
 
         [HttpPost("{studentId}/photo")]
-        [AllowAnonymous]
+        [Authorize]
+        [EnableRateLimiting("photo_upload")]
         [RequestSizeLimit(15 * 1024 * 1024)]
         public async Task<IActionResult> UpdateStudentPhoto(
             string studentId,
@@ -398,6 +513,31 @@ namespace BuaStudentApi.Controllers
             var student = await _db.Students.FirstOrDefaultAsync(s => s.StudentId == studentId);
             if (student == null)
                 return NotFound(new { success = false, message = $"الطالب صاحب الرقم {studentId} غير موجود" });
+
+            var userRole = User.FindFirst(ClaimTypes.Role)?.Value;
+            var isSuperAdmin = string.Equals(userRole, "superadmin", StringComparison.OrdinalIgnoreCase);
+            var userCollege = User.FindFirst("college")?.Value ?? User.FindFirst("College")?.Value;
+            var myStudentId = User.FindFirst("student_id")?.Value;
+            var currentUserId = int.TryParse(User.FindFirst(ClaimTypes.NameIdentifier)?.Value, out var uid) ? uid : (int?)null;
+
+            if (string.Equals(userRole, "student", StringComparison.OrdinalIgnoreCase))
+            {
+                if (myStudentId != studentId)
+                {
+                    return StatusCode(403, new { success = false, message = "غير مصرح: يمكنك تعديل صورتك الشخصية فقط" });
+                }
+                if (student.UserId == null && currentUserId.HasValue)
+                {
+                    student.UserId = currentUserId.Value;
+                }
+            }
+            else if (!isSuperAdmin)
+            {
+                if (string.IsNullOrEmpty(userCollege) || !string.Equals(student.College?.Trim(), userCollege.Trim(), StringComparison.OrdinalIgnoreCase))
+                {
+                    return StatusCode(403, new { success = false, message = $"غير مصرح: يمكنك تعديل صور طلاب كلية {userCollege} فقط" });
+                }
+            }
 
             using var ms = new MemoryStream();
             await uploadedFile.CopyToAsync(ms);
@@ -427,7 +567,7 @@ namespace BuaStudentApi.Controllers
                 OffsetX = finalOx,
                 OffsetY = finalOy,
                 AutoCrop = finalAutoCrop,
-                AcademicYear = student.AcademicYear ?? "2026/2027",
+                AcademicYear = student.Year ?? "2026",
                 College = student.College
             };
 
@@ -438,15 +578,19 @@ namespace BuaStudentApi.Controllers
                 return StatusCode(503, new { success = false, message = "طابور المعالجة ممتلئ حالياً بسبب ضغط الاستخدام الشديد. يرجى المحاولة بعد لحظات." });
             }
 
-            // Fast-path wait: If workers complete within 4 seconds, return immediate 200 OK
+            // Fast-path wait: Wait up to 15 seconds for workers to complete and return immediate 200 OK
             using var cts = CancellationTokenSource.CreateLinkedTokenSource(HttpContext.RequestAborted);
-            cts.CancelAfter(TimeSpan.FromSeconds(4));
+            cts.CancelAfter(TimeSpan.FromSeconds(15));
 
             try
             {
                 var result = await item.CompletionSource.Task.WaitAsync(cts.Token);
                 if (result.Success)
                 {
+                    // Clear memory cache so any subsequent read (refresh) gets the fresh DB data
+                    _cache.Remove($"card_{studentId}");
+                    _cache.Remove($"card_{studentId.Trim()}");
+
                     return Ok(new
                     {
                         success = true,
@@ -457,16 +601,23 @@ namespace BuaStudentApi.Controllers
                         durationMs = result.Duration.TotalMilliseconds
                     });
                 }
-                return StatusCode(500, new { success = false, message = result.Error ?? "فشل في معالجة الصورة" });
+                return BadRequest(new { success = false, message = result.Error ?? "فشل في معالجة الصورة" });
             }
             catch (OperationCanceledException)
             {
-                // Heavy load burst: return 202 Accepted with queue position so client polls / listens via SignalR
+                // Clear memory cache as well
+                _cache.Remove($"card_{studentId}");
+                _cache.Remove($"card_{studentId.Trim()}");
+
+                // Heavy load burst: return 202 Accepted with deterministic URL
+                var fallbackPath = $"uploads/{student.Year ?? "2026"}/{_photoService.SanitizeCollegeFolderName(student.College)}/{studentId}.jpg";
                 return Accepted(new
                 {
                     success = true,
                     queued = true,
                     jobId = item.JobId,
+                    url = $"/{fallbackPath}?t={DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}",
+                    new_url = $"/{fallbackPath}?t={DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}",
                     queuePosition = _photoQueue.CurrentQueueLength,
                     message = "تم إدراج صورتك في طابور المعالجة بنجاح وجاري تنفيذها بواسطة العمال المتزامنين..."
                 });

@@ -35,7 +35,7 @@ export const PhotoCropperModal: React.FC<PhotoCropperModalProps> = ({
 }) => {
   const [file, setFile] = useState<File | null>(null);
   const [rawPreview, setRawPreview] = useState<string | null>(null);
-  const [zoom, setZoom] = useState<number>(1.0);
+  const [zoom, setZoom] = useState<number>(1.35);
   const [rotation, setRotation] = useState<number>(0);
   const [flipH, setFlipH] = useState<boolean>(false);
   const [serverPreview, setServerPreview] = useState<string | null>(null);
@@ -55,7 +55,7 @@ export const PhotoCropperModal: React.FC<PhotoCropperModalProps> = ({
       setRawPreview(URL.createObjectURL(initialFile));
       setServerPreview(null);
       setErrorMsg(null);
-      setZoom(1.0);
+      setZoom(1.35);
       setRotation(0);
       setFlipH(false);
       setOffset({ x: 0, y: 0 });
@@ -71,7 +71,7 @@ export const PhotoCropperModal: React.FC<PhotoCropperModalProps> = ({
       setRawPreview(URL.createObjectURL(selected));
       setServerPreview(null);
       setErrorMsg(null);
-      setZoom(1.0);
+      setZoom(1.35);
       setRotation(0);
       setFlipH(false);
       setOffset({ x: 0, y: 0 });
@@ -171,21 +171,32 @@ export const PhotoCropperModal: React.FC<PhotoCropperModalProps> = ({
         res = await apiClient.post(`/students/${studentId}/photo`, formData, {
           headers: { 'Content-Type': 'multipart/form-data' }
         });
-      } catch {
-        res = await apiClient.post('/photos/upload', formData, {
-          headers: { 'Content-Type': 'multipart/form-data' }
-        });
+      } catch (firstErr: any) {
+        if (firstErr.response?.status === 400 || firstErr.response?.status === 422) {
+          throw firstErr;
+        }
+        try {
+          res = await apiClient.post('/photos/upload', formData, {
+            headers: { 'Content-Type': 'multipart/form-data' }
+          });
+        } catch {
+          throw firstErr;
+        }
       }
 
-      if (res.data?.success) {
-        const imagePath = res.data.url || res.data.new_url || res.data.imagePath || res.data.imageUrl;
-        onSuccess(imagePath);
+      if (res?.data?.success) {
+        const imagePath = res.data.url || res.data.new_url || res.data.imagePath || res.data.imageUrl || `/uploads/${year}/${studentId}.jpg`;
+        try {
+          onSuccess(imagePath);
+        } catch (cbErr) {
+          console.error('onSuccess callback error:', cbErr);
+        }
         onClose();
       } else {
-        setErrorMsg(res.data?.message || 'فشل حفظ الصورة');
+        setErrorMsg(res?.data?.message || 'فشل حفظ الصورة');
       }
     } catch (err: any) {
-      setErrorMsg(err.response?.data?.message || 'حدث خطأ أثناء حفظ الصورة في المنظومة');
+      setErrorMsg(err.response?.data?.message || err.message || 'حدث خطأ أثناء حفظ الصورة في المنظومة');
     } finally {
       setUploading(false);
     }
@@ -216,6 +227,16 @@ export const PhotoCropperModal: React.FC<PhotoCropperModalProps> = ({
 
         {/* Content Body */}
         <div className="p-6 overflow-y-auto space-y-6">
+          {/* Always rendered file input so 'Change Photo' button works anywhere */}
+          <input
+            type="file"
+            ref={fileInputRef}
+            onChange={handleFileChange}
+            onClick={(e) => { (e.target as HTMLInputElement).value = ''; }}
+            accept="image/jpeg,image/png,image/jpg"
+            className="hidden"
+          />
+
           {errorMsg && (
             <div className="p-3 bg-red-950/50 border border-red-800/60 rounded-xl text-xs text-red-300 flex items-center space-x-2 space-x-reverse">
               <AlertCircle className="w-4 h-4 text-red-400 flex-shrink-0" />
@@ -236,13 +257,6 @@ export const PhotoCropperModal: React.FC<PhotoCropperModalProps> = ({
               <p className="text-xs text-slate-400 max-w-sm">
                 الأنواع المدعومة: JPEG، PNG بحجم أقصى 8 ميجابايت. سيتم ضبط الأبعاد تلقائياً إلى 400×500 بكسل بنسبة البطاقة الرسمية.
               </p>
-              <input
-                type="file"
-                ref={fileInputRef}
-                onChange={handleFileChange}
-                accept="image/jpeg,image/png,image/jpg"
-                className="hidden"
-              />
             </div>
           ) : (
             /* Cropper Editor */
@@ -286,11 +300,16 @@ export const PhotoCropperModal: React.FC<PhotoCropperModalProps> = ({
                     />
                   </div>
 
-                  {/* Face Guide Overlay */}
-                  <div className="absolute inset-0 pointer-events-none border border-amber-400/30 rounded-lg flex flex-col items-center justify-center">
-                    <div className="w-24 h-32 border border-dashed border-amber-400/50 rounded-full mb-2"></div>
-                    <div className="text-[9px] font-semibold text-amber-300 bg-slate-950/70 px-2 py-0.5 rounded-full border border-amber-500/20">
-                      اسحب لضبط موضع الوجه
+                  {/* Biometric Face & Shoulders Guide Overlay */}
+                  <div className="absolute inset-0 pointer-events-none border border-amber-400/30 rounded-lg flex flex-col items-center justify-start pt-5 overflow-hidden">
+                    {/* Head / Face Oval */}
+                    <div className="w-24 h-32 border-2 border-dashed border-amber-400/60 rounded-full mb-1 shadow-[0_0_15px_rgba(245,158,11,0.2)] flex items-center justify-center">
+                      <div className="w-1.5 h-1.5 rounded-full bg-amber-400/40"></div>
+                    </div>
+                    {/* Shoulders Arc Guide */}
+                    <div className="w-48 h-10 border-t-2 border-dashed border-amber-400/50 rounded-t-[50%] mb-1"></div>
+                    <div className="text-[10px] font-semibold text-amber-300 bg-slate-950/80 px-2.5 py-0.5 rounded-full border border-amber-500/30 shadow">
+                      إطار الوجه والأكتاف الرسمي
                     </div>
                   </div>
                 </div>
@@ -311,6 +330,44 @@ export const PhotoCropperModal: React.FC<PhotoCropperModalProps> = ({
 
               {/* Controls Toolbar */}
               <div className="bg-slate-800/60 p-4 rounded-xl border border-slate-700 space-y-4">
+                {/* Zoom Presets */}
+                <div className="flex items-center justify-center gap-2 flex-wrap">
+                  <span className="text-xs text-slate-400 ml-1">أوضاع التقريب:</span>
+                  <button
+                    type="button"
+                    onClick={() => { handleZoomChange(1.35); setOffset({ x: 0, y: 0 }); }}
+                    className={`px-2.5 py-1 rounded-lg text-xs font-bold transition ${
+                      Math.abs(zoom - 1.35) < 0.05 
+                        ? 'bg-amber-500 text-slate-950 shadow-md' 
+                        : 'bg-slate-700 hover:bg-slate-600 text-slate-200'
+                    }`}
+                  >
+                    🎯 الوجه والأكتاف (135%)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { handleZoomChange(1.65); setOffset({ x: 0, y: 0 }); }}
+                    className={`px-2.5 py-1 rounded-lg text-xs font-bold transition ${
+                      Math.abs(zoom - 1.65) < 0.05 
+                        ? 'bg-amber-500 text-slate-950 shadow-md' 
+                        : 'bg-slate-700 hover:bg-slate-600 text-slate-200'
+                    }`}
+                  >
+                    🔍 تقريب أكثر (165%)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { handleZoomChange(1.0); setOffset({ x: 0, y: 0 }); }}
+                    className={`px-2.5 py-1 rounded-lg text-xs transition ${
+                      Math.abs(zoom - 1.0) < 0.05 
+                        ? 'bg-amber-500 text-slate-950' 
+                        : 'bg-slate-700 hover:bg-slate-600 text-slate-300'
+                    }`}
+                  >
+                    كامل الصورة (100%)
+                  </button>
+                </div>
+
                 {/* Zoom Slider */}
                 <div className="flex items-center space-x-3 space-x-reverse">
                   <ZoomOut className="w-4 h-4 text-slate-400" />
@@ -366,9 +423,11 @@ export const PhotoCropperModal: React.FC<PhotoCropperModalProps> = ({
                   <button
                     type="button"
                     onClick={() => fileInputRef.current?.click()}
-                    className="p-2 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-300 text-xs transition"
+                    className="px-3 py-2 rounded-lg bg-slate-700 hover:bg-slate-600 text-amber-300 text-xs font-bold flex items-center space-x-1.5 space-x-reverse transition border border-slate-600 hover:border-amber-400/50 cursor-pointer shadow-sm"
+                    title="اختيار صورة أخرى من جهازك"
                   >
-                    تغيير الصورة
+                    <Upload className="w-3.5 h-3.5" />
+                    <span>تغيير الصورة</span>
                   </button>
                 </div>
               </div>

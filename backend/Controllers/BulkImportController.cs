@@ -36,6 +36,57 @@ namespace BuaStudentApi.Controllers
             _scopeFactory = scopeFactory;
         }
 
+        [HttpGet("template")]
+        [AllowAnonymous]
+        public IActionResult DownloadTemplate()
+        {
+            using var workbook = new XLWorkbook();
+            var worksheet = workbook.Worksheets.Add("نموذج استيراد الطلاب");
+            worksheet.RightToLeft = true;
+
+            string[] headers = new[]
+            {
+                "كود الطالب",
+                "اسم الطالب",
+                "الرقم القومي",
+                "رقم الهاتف",
+                "البريد الإلكتروني",
+                "الكلية",
+                "الفرقة الدراسية",
+                "القسم / الشعبة"
+            };
+
+            for (int i = 0; i < headers.Length; i++)
+            {
+                var cell = worksheet.Cell(1, i + 1);
+                cell.Value = headers[i];
+                cell.Style.Font.Bold = true;
+                cell.Style.Font.FontColor = XLColor.White;
+                cell.Style.Fill.BackgroundColor = XLColor.FromArgb(26, 58, 107);
+                cell.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
+                cell.Style.Alignment.Vertical = XLAlignmentVerticalValues.Center;
+            }
+            worksheet.Row(1).Height = 28;
+
+            // Add sample row
+            worksheet.Cell(2, 1).SetValue("2024001001");
+            worksheet.Cell(2, 2).SetValue("محمد أحمد محمود علي");
+            worksheet.Cell(2, 3).SetValue("30501012501234");
+            worksheet.Cell(2, 4).SetValue("01012345678");
+            worksheet.Cell(2, 5).SetValue("mohamed.2024001001@bua.edu.eg");
+            worksheet.Cell(2, 6).SetValue("كلية  ذكاء اصطناعي وعلوم البيانات");
+            worksheet.Cell(2, 7).SetValue("الفرقة الأولى");
+            worksheet.Cell(2, 8).SetValue("عام");
+
+            worksheet.Columns().AdjustToContents(15, 45);
+
+            using var stream = new MemoryStream();
+            workbook.SaveAs(stream);
+            var content = stream.ToArray();
+
+            return File(content, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "BUA_Students_Template.xlsx");
+        }
+
         [HttpPost("upload")]
         [RequestSizeLimit(35 * 1024 * 1024)] // 35 MB
         public async Task<IActionResult> Upload(
@@ -51,10 +102,16 @@ namespace BuaStudentApi.Controllers
             if (ext != ".xlsx" && ext != ".xls" && ext != ".csv")
                 return BadRequest(new { success = false, message = "صيغة الملف غير مدعومة. الصيغ المسموحة: .xlsx, .xls, .csv" });
 
-            var currentRole = User.FindFirstValue(ClaimTypes.Role) ?? "";
-            var currentUserId = int.TryParse(User.FindFirstValue(ClaimTypes.NameIdentifier), out var uid) ? uid : (int?)null;
-            var userCollege = User.FindFirstValue("College");
+            var currentRole = User.FindFirst(ClaimTypes.Role)?.Value ?? "";
+            var isSuperAdmin = string.Equals(currentRole, "superadmin", StringComparison.OrdinalIgnoreCase);
+            var currentUserId = int.TryParse(User.FindFirst(ClaimTypes.NameIdentifier)?.Value, out var uid) ? uid : (int?)null;
+            var userCollege = User.FindFirst("college")?.Value ?? User.FindFirst("College")?.Value;
             var userIp = HttpContext.Connection.RemoteIpAddress?.ToString();
+
+            if (!isSuperAdmin && !string.IsNullOrWhiteSpace(userCollege))
+            {
+                collegeOverride = userCollege;
+            }
 
             // Read file into memory buffer so we can process it in background
             byte[] fileBytes;
@@ -76,49 +133,52 @@ namespace BuaStudentApi.Controllers
                     await _jobManager.UpdateProgressAsync(job.JobId, 10, "جاري قراءة وتحليل ملف الإكسل...");
 
                     using var stream = new MemoryStream(fileBytes);
-                    var parsedRows = _excelService.ParseFile(stream, file.FileName, userCollege, currentRole);
+                    var parseResult = _excelService.ParseFileAdvanced(stream, file.FileName, userCollege, currentRole);
+                    var parsedRows = parseResult.ValidRows;
+                    var skippedList = new List<BulkImportRowPreview>(parseResult.SkippedRows);
+                    var passedList = new List<BulkImportRowPreview>();
+                    int emptyRowsCount = parseResult.IgnoredEmptyRows;
 
-                    if (parsedRows == null || parsedRows.Count == 0)
+                    if ((parsedRows == null || parsedRows.Count == 0) && skippedList.Count == 0)
                     {
                         await _jobManager.FailJobAsync(job.JobId, "لم يتم العثور على أي صفوف أو بيانات صالحة في الملف");
                         return;
                     }
 
                     var totalRows = parsedRows.Count;
-                    await _jobManager.UpdateProgressAsync(job.JobId, 25, $"تم العثور على {totalRows} سجل. جاري التدقيق والتحميل لقاعدة البيانات...");
+                    await _jobManager.UpdateProgressAsync(job.JobId, 25, $"تم فحص {parseResult.TotalInspectedRows} صف. جاري التدقيق والتحميل لقاعدة البيانات...");
 
                     int createdCount = 0;
                     int updatedCount = 0;
-                    int skippedCount = 0;
-                    var errors = new List<string>();
-                    var previewList = new List<BulkImportRowPreview>();
+                    int skippedCount = skippedList.Count;
 
                     for (int i = 0; i < totalRows; i++)
                     {
                         var row = parsedRows[i];
 
-                        if (string.IsNullOrWhiteSpace(row.StudentId) || string.IsNullOrWhiteSpace(row.FullName))
-                        {
-                            skippedCount++;
-                            if (errors.Count < 50)
-                                errors.Add($"الصف {row.RowNumber}: تم التجاهل لعدم وجود الرقم الجامعي أو الاسم");
-                            continue;
-                        }
-
-                        var targetCollege = !string.IsNullOrWhiteSpace(collegeOverride)
-                            ? collegeOverride.Trim()
-                            : (!string.IsNullOrWhiteSpace(row.College) ? row.College.Trim() : (userCollege ?? "عام"));
+                        var targetCollege = (!isSuperAdmin && !string.IsNullOrWhiteSpace(userCollege))
+                            ? userCollege
+                            : (!string.IsNullOrWhiteSpace(collegeOverride)
+                                ? collegeOverride.Trim()
+                                : (!string.IsNullOrWhiteSpace(row.College) ? row.College.Trim() : (userCollege ?? "عام")));
 
                         var targetYear = !string.IsNullOrWhiteSpace(yearOverride)
                             ? yearOverride.Trim()
                             : (!string.IsNullOrWhiteSpace(row.Year) ? row.Year.Trim() : "2024-2025");
 
-                        // Role restriction: Admin can only import into their college
-                        if (currentRole == "Admin" && !string.IsNullOrWhiteSpace(userCollege) && targetCollege != userCollege)
+                        // Role restriction: Supervisor can only import into their college
+                        if (!isSuperAdmin && !string.IsNullOrWhiteSpace(userCollege) && !string.IsNullOrWhiteSpace(row.College) && row.College.Trim() != userCollege)
                         {
                             skippedCount++;
-                            if (errors.Count < 50)
-                                errors.Add($"الصف {row.RowNumber}: غير مصرح لك باستيراد طلاب لكلية {targetCollege}");
+                            skippedList.Add(new BulkImportRowPreview
+                            {
+                                RowNumber = row.RowNumber,
+                                Sid = row.StudentId,
+                                Name = row.FullName,
+                                College = row.College,
+                                Status = "تخطي (صلاحيات الكلية)",
+                                Reason = $"الصف {row.RowNumber}: غير مصرح لك باستيراد طلاب لكلية {row.College} (مسموح لكلية {userCollege} فقط)"
+                            });
                             continue;
                         }
 
@@ -129,8 +189,15 @@ namespace BuaStudentApi.Controllers
                             if (duplicateHandling == "skip")
                             {
                                 skippedCount++;
-                                if (previewList.Count < 10)
-                                    previewList.Add(new BulkImportRowPreview { Sid = row.StudentId, Name = row.FullName, Status = "تخطي (موجود مسبقاً)", Email = row.Email });
+                                skippedList.Add(new BulkImportRowPreview
+                                {
+                                    RowNumber = row.RowNumber,
+                                    Sid = row.StudentId,
+                                    Name = row.FullName,
+                                    College = targetCollege,
+                                    Status = "تخطي (موجود مسبقاً)",
+                                    Reason = $"الصف {row.RowNumber}: الطالب ({row.FullName}) مسجل مسبقاً في المنظومة بنفس الكود ({row.StudentId})"
+                                });
                                 continue;
                             }
 
@@ -138,7 +205,7 @@ namespace BuaStudentApi.Controllers
                             existingStudent.FullName = row.FullName;
                             existingStudent.College = targetCollege;
                             existingStudent.Section = row.Section;
-                            existingStudent.AcademicYear = targetYear;
+                            existingStudent.Year = targetYear;
                             if (!string.IsNullOrWhiteSpace(row.Email))
                                 existingStudent.Email = row.Email;
                             if (!string.IsNullOrWhiteSpace(row.NationalId))
@@ -148,8 +215,15 @@ namespace BuaStudentApi.Controllers
                             existingStudent.UpdatedAt = DateTime.UtcNow;
 
                             updatedCount++;
-                            if (previewList.Count < 10)
-                                previewList.Add(new BulkImportRowPreview { Sid = row.StudentId, Name = row.FullName, Status = "مُحدّث", Email = row.Email });
+                            passedList.Add(new BulkImportRowPreview
+                            {
+                                RowNumber = row.RowNumber,
+                                Sid = row.StudentId,
+                                Name = row.FullName,
+                                College = targetCollege,
+                                Status = "تم التحديث",
+                                Email = row.Email
+                            });
                         }
                         else
                         {
@@ -160,7 +234,7 @@ namespace BuaStudentApi.Controllers
                                 FullName = row.FullName,
                                 College = targetCollege,
                                 Section = row.Section,
-                                AcademicYear = targetYear,
+                                Year = targetYear,
                                 Email = row.Email ?? $"{row.StudentId}@bua.edu.eg",
                                 NationalId = row.NationalId,
                                 Mobile = row.Mobile,
@@ -170,12 +244,19 @@ namespace BuaStudentApi.Controllers
 
                             db.Students.Add(newStudent);
                             createdCount++;
-                            if (previewList.Count < 10)
-                                previewList.Add(new BulkImportRowPreview { Sid = row.StudentId, Name = row.FullName, Status = "جديد", Email = row.Email });
+                            passedList.Add(new BulkImportRowPreview
+                            {
+                                RowNumber = row.RowNumber,
+                                Sid = row.StudentId,
+                                Name = row.FullName,
+                                College = targetCollege,
+                                Status = "جديد (تمت الإضافة)",
+                                Email = row.Email
+                            });
                         }
 
-                        // Broadcast progress every 100 rows or at the end
-                        if (i % 100 == 0 || i == totalRows - 1)
+                        // Broadcast progress every 50 rows or at the end
+                        if (i % 50 == 0 || i == totalRows - 1)
                         {
                             int pct = 25 + (int)(70.0 * (i + 1) / totalRows);
                             await _jobManager.UpdateProgressAsync(job.JobId, pct, $"تمت معالجة {i + 1} من أصل {totalRows} طالب...");
@@ -189,29 +270,28 @@ namespace BuaStudentApi.Controllers
                         UserId = currentUserId,
                         Action = "BULK_IMPORT",
                         Target = file.FileName,
-                        Detail = $"استيراد: {createdCount} جديد، {updatedCount} تم التحديث، {skippedCount} تم التخطي من إجمالي {totalRows}",
+                        Detail = $"استيراد: {createdCount} جديد، {updatedCount} تم التحديث، {skippedCount} تم التخطي، {emptyRowsCount} فارغ من إجمالي {parseResult.TotalInspectedRows}",
                         Ip = userIp,
                         CreatedAt = DateTime.UtcNow
                     });
                     await db.SaveChangesAsync();
 
-                    var finalResult = new BulkImportResultDto
-                    {
-                        Created = createdCount,
-                        Skipped = skippedCount + updatedCount,
-                        Errors = errors,
-                        Preview = previewList
-                    };
+                    var errorMessages = skippedList.Select(s => s.Reason ?? $"{s.Sid} - {s.Status}").ToList();
 
-                    await _jobManager.CompleteJobAsync(job.JobId, new
+                    var message = $"اكتملت المعالجة بنجاح! تم إضافة {createdCount} طالب جديد، وتحديث {updatedCount}، وتخطي {skippedCount} صف، وتجاهل {emptyRowsCount} صف فارغ تلقائياً.";
+
+                    await _jobManager.CompleteJobAsync(job.JobId, new BulkImportResultDto
                     {
-                        total = totalRows,
-                        created = createdCount,
-                        updated = updatedCount,
-                        skipped = skippedCount,
-                        errors,
-                        preview = previewList,
-                        message = $"اكتمل الاستيراد بنجاح! تم إضافة {createdCount} طالب جديد، وتحديث {updatedCount} طالب، وتخطي {skippedCount}."
+                        Total = parseResult.TotalInspectedRows,
+                        Created = createdCount,
+                        Updated = updatedCount,
+                        Skipped = skippedCount,
+                        IgnoredEmptyRows = emptyRowsCount,
+                        Errors = errorMessages,
+                        PassedRows = passedList,
+                        SkippedRows = skippedList,
+                        Preview = passedList.Take(15).Concat(skippedList.Take(15)).ToList(),
+                        Message = message
                     });
                 }
                 catch (Exception ex)
@@ -247,70 +327,6 @@ namespace BuaStudentApi.Controllers
                 createdAt = job.CreatedAt,
                 completedAt = job.CompletedAt
             });
-        }
-
-        [HttpGet("template")]
-        [AllowAnonymous]
-        public IActionResult DownloadTemplate()
-        {
-            using var workbook = new XLWorkbook();
-            var worksheet = workbook.Worksheets.Add("الطلاب");
-            worksheet.RightToLeft = true;
-
-            // Headers
-            string[] headers = new[]
-            {
-                "الرقم الجامعي",
-                "اسم الطالب",
-                "الكلية",
-                "الفرقة الدراسية",
-                "البريد الإلكتروني",
-                "الرقم القومي",
-                "رقم الهاتف"
-            };
-
-            for (int col = 0; col < headers.Length; col++)
-            {
-                var cell = worksheet.Cell(1, col + 1);
-                cell.Value = headers[col];
-                cell.Style.Font.Bold = true;
-                cell.Style.Font.FontColor = XLColor.White;
-                cell.Style.Fill.BackgroundColor = XLColor.FromArgb(26, 58, 107); // BUA Royal Navy
-                cell.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
-                cell.Style.Alignment.Vertical = XLAlignmentVerticalValues.Center;
-            }
-            worksheet.Row(1).Height = 28;
-
-            // Sample rows
-            var sampleData = new[]
-            {
-                new[] { "20240101", "أحمد محمد محمود السيد", "كلية  ذكاء اصطناعي وعلوم البيانات", "الفرقة الأولى", "ahmed.20240101@bua.edu.eg", "30101011234567", "01012345678" },
-                new[] { "20240102", "سارة خالد عبد الرحمن حسن", "كلية الصيدلة فارما D", "الفرقة الثانية", "sara.20240102@bua.edu.eg", "30202021234568", "01123456789" },
-                new[] { "20240103", "محمود إبراهيم علي حسن", "كلية طب الأسنان", "الفرقة الأولى", "mahmoud.20240103@bua.edu.eg", "30303031234569", "01234567890" }
-            };
-
-            for (int r = 0; r < sampleData.Length; r++)
-            {
-                for (int c = 0; c < sampleData[r].Length; c++)
-                {
-                    var cell = worksheet.Cell(r + 2, c + 1);
-                    cell.Value = sampleData[r][c];
-                    cell.Style.Alignment.Horizontal = XLAlignmentHorizontalValues.Center;
-                }
-                worksheet.Row(r + 2).Height = 22;
-            }
-
-            worksheet.Columns().AdjustToContents(15, 45);
-
-            using var stream = new MemoryStream();
-            workbook.SaveAs(stream);
-            var content = stream.ToArray();
-
-            return File(
-                content,
-                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                "BUA_Students_Template.xlsx"
-            );
         }
     }
 }

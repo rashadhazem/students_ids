@@ -49,18 +49,157 @@ namespace BuaStudentApi.Services
             return ProcessPhotoAsync(rawBytes, zoom, rotation, flipH, offsetX, offsetY, autoCrop).GetAwaiter().GetResult();
         }
 
+        private static readonly System.Net.Http.HttpClient _aiCropperClient = new System.Net.Http.HttpClient
+        {
+            Timeout = TimeSpan.FromSeconds(4)
+        };
+
         public async Task<byte[]> ProcessPhotoAsync(byte[] rawBytes, float zoom = 1.0f, int rotation = 0, bool flipH = false, float offsetX = 0.0f, float offsetY = 0.0f, bool autoCrop = true, System.Threading.CancellationToken cancellationToken = default)
         {
-            // 1. Prioritize Deep Learning AI Face Cropper (YuNet ONNX + OpenCV Haar Cascades)
-            // Strictly bounded by SemaphoreSlim so 5,000 concurrent students never crash the server
-            var aiCropped = await TryAiFaceCropAsync(rawBytes, zoom, rotation, flipH, offsetX, offsetY, autoCrop, cancellationToken);
-            if (aiCropped != null && aiCropped.Length > 500)
+            // 1. Primary: High-Precision AI YuNet Microservice (resident in RAM, ~130ms, exact face & shoulders framing)
+            try
             {
-                return aiCropped;
+                var aiBytes = await TryCallAiCropperMicroserviceAsync(rawBytes, zoom, rotation, flipH, offsetX, offsetY, autoCrop, cancellationToken);
+                if (aiBytes != null && aiBytes.Length > 100)
+                {
+                    return aiBytes;
+                }
+            }
+            catch (InvalidOperationException)
+            {
+                // Strict validation error: rethrow immediately to prevent fallback crop
+                throw;
             }
 
-            // 2. High-performance non-blocking ImageSharp Processing with Intelligent Head-Framing Fallback (~15ms)
+            // 2. Secondary fallback: Local Python CLI using YuNet
+            try
+            {
+                var cliBytes = await TryCallAiCropperCliAsync(rawBytes, zoom, rotation, flipH, offsetX, offsetY, autoCrop, cancellationToken);
+                if (cliBytes != null && cliBytes.Length > 100)
+                {
+                    return cliBytes;
+                }
+            }
+            catch (InvalidOperationException)
+            {
+                // Strict validation error: rethrow immediately to prevent fallback crop
+                throw;
+            }
+
+            // 3. Fallback using ImageSharp (< 20ms) only when AI service is offline
             return await Task.Run(() => ProcessImageWithImageSharp(rawBytes, zoom, rotation, flipH, offsetX, offsetY, autoCrop), cancellationToken);
+        }
+
+        private async Task<byte[]?> TryCallAiCropperMicroserviceAsync(byte[] rawBytes, float zoom, int rotation, bool flipH, float offsetX, float offsetY, bool autoCrop, System.Threading.CancellationToken cancellationToken)
+        {
+            try
+            {
+                using var req = new System.Net.Http.HttpRequestMessage(System.Net.Http.HttpMethod.Post, "http://127.0.0.1:5005/crop");
+                req.Content = new System.Net.Http.ByteArrayContent(rawBytes);
+                req.Headers.Add("X-Crop-Zoom", zoom.ToString(System.Globalization.CultureInfo.InvariantCulture));
+                req.Headers.Add("X-Crop-Rotation", rotation.ToString());
+                req.Headers.Add("X-Crop-FlipH", flipH ? "true" : "false");
+                req.Headers.Add("X-Crop-OffsetX", offsetX.ToString(System.Globalization.CultureInfo.InvariantCulture));
+                req.Headers.Add("X-Crop-OffsetY", offsetY.ToString(System.Globalization.CultureInfo.InvariantCulture));
+                req.Headers.Add("X-Crop-AutoCrop", autoCrop ? "true" : "false");
+
+                using var resp = await _aiCropperClient.SendAsync(req, cancellationToken);
+                if (resp.IsSuccessStatusCode)
+                {
+                    return await resp.Content.ReadAsByteArrayAsync(cancellationToken);
+                }
+
+                if (resp.StatusCode == System.Net.HttpStatusCode.UnprocessableEntity ||
+                    resp.StatusCode == System.Net.HttpStatusCode.BadRequest)
+                {
+                    var errorMsg = await resp.Content.ReadAsStringAsync(cancellationToken);
+                    if (!string.IsNullOrWhiteSpace(errorMsg))
+                    {
+                        throw new InvalidOperationException(errorMsg.Trim());
+                    }
+                }
+            }
+            catch (InvalidOperationException)
+            {
+                throw;
+            }
+            catch
+            {
+                // Fallback to CLI or ImageSharp on offline connection or server crash
+            }
+            return null;
+        }
+
+        private async Task<byte[]?> TryCallAiCropperCliAsync(byte[] rawBytes, float zoom, int rotation, bool flipH, float offsetX, float offsetY, bool autoCrop, System.Threading.CancellationToken cancellationToken)
+        {
+            string? tempIn = null;
+            string? tempOut = null;
+            try
+            {
+                var candidatePaths = new[]
+                {
+                    Path.Combine(AppContext.BaseDirectory, "ai", "smart_cropper_cli.py"),
+                    Path.Combine(Directory.GetCurrentDirectory(), "ai", "smart_cropper_cli.py"),
+                    Path.Combine(Directory.GetCurrentDirectory(), "backend", "ai", "smart_cropper_cli.py")
+                };
+
+                var cliScript = candidatePaths.FirstOrDefault(System.IO.File.Exists);
+                if (cliScript == null) return null;
+
+                tempIn = Path.Combine(Path.GetTempPath(), $"bua_in_{Guid.NewGuid():N}.jpg");
+                tempOut = Path.Combine(Path.GetTempPath(), $"bua_out_{Guid.NewGuid():N}.jpg");
+                await System.IO.File.WriteAllBytesAsync(tempIn, rawBytes, cancellationToken);
+
+                var zStr = zoom.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                var oxStr = offsetX.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                var oyStr = offsetY.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                var fhStr = flipH ? "true" : "false";
+                var acStr = autoCrop ? "true" : "false";
+
+                var psi = new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = "python",
+                    Arguments = $"\"{cliScript}\" \"{tempIn}\" \"{tempOut}\" {zStr} {rotation} {fhStr} {oxStr} {oyStr} {acStr}",
+                    CreateNoWindow = true,
+                    UseShellExecute = false,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true
+                };
+
+                using var proc = System.Diagnostics.Process.Start(psi);
+                if (proc != null)
+                {
+                    using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                    cts.CancelAfter(TimeSpan.FromSeconds(5));
+                    await proc.WaitForExitAsync(cts.Token);
+
+                    if (proc.ExitCode == 2)
+                    {
+                        var stdErr = await proc.StandardError.ReadToEndAsync(cts.Token);
+                        var cleanMsg = stdErr.Replace("VALIDATION_ERROR:", "").Trim();
+                        throw new InvalidOperationException(string.IsNullOrWhiteSpace(cleanMsg) ? "فشل التحقق من الصورة" : cleanMsg);
+                    }
+
+                    if (proc.ExitCode == 0 && System.IO.File.Exists(tempOut))
+                    {
+                        return await System.IO.File.ReadAllBytesAsync(tempOut, cancellationToken);
+                    }
+                }
+            }
+            catch (InvalidOperationException)
+            {
+                throw;
+            }
+            catch
+            {
+                // Fallback to ImageSharp
+            }
+            finally
+            {
+                if (tempIn != null && System.IO.File.Exists(tempIn)) try { System.IO.File.Delete(tempIn); } catch { }
+                if (tempOut != null && System.IO.File.Exists(tempOut)) try { System.IO.File.Delete(tempOut); } catch { }
+            }
+            return null;
         }
 
         private byte[] ProcessImageWithImageSharp(byte[] rawBytes, float zoom, int rotation, bool flipH, float offsetX, float offsetY, bool autoCrop)
@@ -91,33 +230,47 @@ namespace BuaStudentApi.Services
 
                 if (autoCrop || zoom != 1.0f || offsetX != 0.0f || offsetY != 0.0f)
                 {
-                    // Target aspect ratio is 400:500 = 0.8
+                    // Target aspect ratio is 400:500 = 0.8 (Official ID card standard)
                     float targetAspect = (float)TargetWidth / TargetHeight;
                     float currentAspect = (float)currentW / currentH;
 
                     int cropW = currentW;
                     int cropH = currentH;
 
-                    if (currentAspect > targetAspect)
+                    if (autoCrop)
                     {
-                        // Image is wider than 4:5
-                        cropW = (int)(currentH * targetAspect / zoom);
-                        cropH = (int)(currentH / zoom);
-                    }
-                    else
-                    {
-                        // Image is taller than 4:5 (vertical / full-body / portrait)
-                        if (autoCrop)
+                        // Close-up Biometric ID Framing (Face + Shoulders strictly):
+                        // Eliminates chest, torso, waist, arms and wide backgrounds
+                        if (currentAspect > targetAspect)
                         {
-                            // Focus strictly on the upper portrait (head & bust) - cut off lower 55% body
-                            int maxHeadCropH = (int)(currentH * 0.45f);
-                            cropH = Math.Min(currentH, (int)(maxHeadCropH / zoom));
+                            // Wide / Landscape photo: focus tightly on the upper 55% where the head & shoulders are
+                            cropH = (int)(currentH * 0.55f / zoom);
                             cropW = (int)(cropH * targetAspect);
                             if (cropW > currentW)
                             {
                                 cropW = currentW;
                                 cropH = (int)(cropW / targetAspect);
                             }
+                        }
+                        else
+                        {
+                            // Portrait / Vertical photo: focus tightly on the upper 38% (face + collar/shoulders)
+                            cropH = (int)(currentH * 0.38f / zoom);
+                            cropW = (int)(cropH * targetAspect);
+                            if (cropW > currentW)
+                            {
+                                cropW = currentW;
+                                cropH = (int)(cropW / targetAspect);
+                            }
+                        }
+                    }
+                    else
+                    {
+                        // Manual cropper custom zoom
+                        if (currentAspect > targetAspect)
+                        {
+                            cropW = (int)(currentH * targetAspect / zoom);
+                            cropH = (int)(currentH / zoom);
                         }
                         else
                         {
@@ -129,9 +282,8 @@ namespace BuaStudentApi.Services
                     cropW = Math.Clamp(cropW, 10, currentW);
                     cropH = Math.Clamp(cropH, 10, currentH);
 
-                    // Intelligent Portrait Framing:
-                    // For official ID cards, focus on the upper 25-35% (head & face area) rather than middle torso
-                    float defaultCenterYRatio = autoCrop ? 0.28f : 0.50f;
+                    // Vertical alignment: Eyes & Head at upper 30%, Shoulders resting at lower 25%
+                    float defaultCenterYRatio = autoCrop ? (currentAspect > targetAspect ? 0.32f : 0.24f) : 0.50f;
                     int centerX = (int)(currentW * 0.50f + offsetX * currentW * 0.50f);
                     int centerY = (int)(currentH * defaultCenterYRatio + offsetY * currentH * 0.50f);
 
@@ -280,13 +432,21 @@ namespace BuaStudentApi.Services
 
         public async Task<string> SavePhotoAsync(byte[] processedBytes, string studentId, string year, string college, string webRootPath)
         {
+            var cleanStudentId = Regex.Replace(studentId ?? "", @"[^a-zA-Z0-9_-]", "").Trim();
+            if (string.IsNullOrEmpty(cleanStudentId))
+            {
+                cleanStudentId = Guid.NewGuid().ToString("N");
+            }
+            var cleanYear = Regex.Replace(year ?? "2026", @"[^a-zA-Z0-9_\u0621-\u064A-]", "").Trim();
+            if (string.IsNullOrEmpty(cleanYear)) cleanYear = "2026";
+
             var collegeFolder = SanitizeCollegeFolderName(college);
-            var relativeDir = Path.Combine("uploads", year, collegeFolder);
+            var relativeDir = Path.Combine("uploads", cleanYear, collegeFolder);
             var absoluteDir = Path.Combine(webRootPath, relativeDir);
 
             Directory.CreateDirectory(absoluteDir);
 
-            var fileName = $"{studentId}.jpg";
+            var fileName = $"{cleanStudentId}.jpg";
             var absolutePath = Path.Combine(absoluteDir, fileName);
 
             await File.WriteAllBytesAsync(absolutePath, processedBytes);

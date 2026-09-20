@@ -13,6 +13,7 @@ export interface StudentCardData {
   nationalId?: string;
   mobile?: string;
   email?: string;
+  updatedAt?: string;
 }
 
 interface StudentCardProps {
@@ -51,22 +52,41 @@ export const StudentCard: React.FC<StudentCardProps> = ({
     return `https://www.linkedin.com/sharing/share-offsite/?url=${shareUrl}&summary=${shareText}`;
   };
 
-  return (
-    <div className="bua-id-card">
-      {/* Decorative Gold Rings */}
-      <div className="id-card-ring" />
-      <div className="id-card-ring-sm" />
+  // Robust image URL calculation preventing double slashes and browser cache stale
+  const photoUrl = React.useMemo(() => {
+    if (!student.imagePath || !student.imagePath.trim()) {
+      return `${API_BASE_URL}/api/photos/placeholder`;
+    }
+    const cleanPath = student.imagePath.trim();
+    let url: string;
+    if (cleanPath.startsWith('http://') || cleanPath.startsWith('https://') || cleanPath.startsWith('blob:') || cleanPath.startsWith('data:')) {
+      url = cleanPath;
+    } else {
+      url = `${API_BASE_URL}/${cleanPath.replace(/^\/+/, '')}`;
+    }
+    if (!url.includes('t=') && !url.includes('v=')) {
+      const v = student.updatedAt ? new Date(student.updatedAt).getTime() : Date.now();
+      url += (url.includes('?') ? '&' : '?') + `v=${v}`;
+    }
+    return url;
+  }, [student.imagePath, student.updatedAt]);
 
+  return (
+    <div
+      className="printable-card w-full max-w-[440px] rounded-[24px] overflow-hidden relative shadow-[0_20px_50px_rgba(0,0,0,0.5)] border border-[rgba(232,184,75,0.25)] transition-all duration-300 hover:shadow-[0_24px_60px_rgba(0,0,0,0.65)] hover:border-[rgba(232,184,75,0.4)]"
+      style={{
+        background: 'linear-gradient(145deg, #0f2546 0%, #163768 50%, #0d1f3c 100%)',
+        boxShadow: '0 20px 50px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.1)'
+      }}
+    >
       {/* Front Card Header */}
-      <div className="p-[20px_24px_16px] flex items-center justify-between border-b border-white/10 relative z-10">
+      <div className="px-6 pt-6 pb-4 flex items-center justify-between border-b border-white/10 relative z-10">
         <div className="flex items-center gap-3">
-          <div className="w-[42px] h-[42px] bg-[rgba(232,184,75,0.18)] border border-[rgba(232,184,75,0.4)] rounded-xl flex items-center justify-center shadow-[0_4px_12px_rgba(232,184,75,0.15)]">
-            <svg viewBox="0 0 24 24" className="w-5 h-5 fill-gold2">
-              <path d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4z" />
-            </svg>
+          <div className="w-10 h-10 rounded-full bg-gold2/15 border border-gold2/30 flex items-center justify-center shadow-inner">
+            <span className="text-xl select-none">🏛️</span>
           </div>
           <div className="text-right">
-            <div className="text-white text-xs font-bold font-cairo leading-tight">
+            <div className="text-white font-bold text-sm tracking-wide font-cairo">
               جامعة بدر بأسيوط
             </div>
             <div className="text-white/40 text-[10px] tracking-wider font-tajawal">
@@ -91,7 +111,7 @@ export const StudentCard: React.FC<StudentCardProps> = ({
             }`}
           >
             <img
-              src={student.imagePath ? `${API_BASE_URL}/${student.imagePath}` : `${API_BASE_URL}/api/photos/placeholder`}
+              src={photoUrl}
               alt={student.fullName}
               className="w-full h-full object-cover object-top block transition-transform duration-300 group-hover:scale-105"
               onError={(e) => {
@@ -122,41 +142,30 @@ export const StudentCard: React.FC<StudentCardProps> = ({
             {student.fullName}
           </div>
 
-          <div className="flex items-center gap-1.5 mb-1.5">
+          <div className="flex items-center gap-1.5 mb-2">
             <svg viewBox="0 0 24 24" className="w-3.5 h-3.5 fill-gold2 flex-shrink-0 opacity-80">
               <path d="M12 3L1 9l11 6 9-4.91V17h2V9L12 3zM5 13.18v4L12 21l7-3.82v-4L12 17l-7-3.82z" />
             </svg>
-            <span className="text-xs text-white/70 font-tajawal truncate">
+            <span className="text-xs text-white/90 font-bold font-tajawal truncate">
               {student.college}
             </span>
           </div>
 
-          {student.section && (
-            <div className="flex items-center gap-1.5 mb-1.5">
-              <svg viewBox="0 0 24 24" className="w-3.5 h-3.5 fill-gold2 flex-shrink-0 opacity-80">
-                <path d="M4 6H2v14c0 1.1.9 2 2 2h14v-2H4V6zm16-4H8c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H8V4h12v12z" />
-              </svg>
-              <span className="text-xs text-white/70 font-tajawal truncate">
-                القسم: {student.section}
-              </span>
-            </div>
-          )}
-
-          <div className="flex items-center gap-1.5 mb-1.5">
+          <div className="flex items-center gap-1.5 mb-2" dir="ltr">
             <svg viewBox="0 0 24 24" className="w-3.5 h-3.5 fill-gold2 flex-shrink-0 opacity-80">
-              <path d="M9 11H7v2h2v-2zm4 0h-2v2h2v-2zm4 0h-2v2h2v-2zm2-7h-1V2h-2v2H8V2H6v2H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 16H5V9h14v11z" />
+              <path d="M20 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 4l-8 5-8-5V6l8 5 8-5v2z" />
             </svg>
-            <span className="text-xs text-white/70 font-tajawal">
-              سنة التسجيل: {student.year || '2024'}
+            <span className="text-[11px] text-white/80 font-mono truncate">
+              {student.email || (student.studentId ? `${student.studentId}@bua.edu.eg` : '–')}
             </span>
           </div>
 
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-1.5" dir="ltr">
             <svg viewBox="0 0 24 24" className="w-3.5 h-3.5 fill-gold2 flex-shrink-0 opacity-80">
-              <path d="M11.99 2C6.47 2 2 6.48 2 12s4.47 10 9.99 10C17.52 22 22 17.52 22 12S17.52 2 11.99 2zm4.24 16L12 15.45 7.77 18l1.12-4.81-3.73-3.23 4.92-.42L12 5l1.92 4.53 4.92.42-3.73 3.23L16.23 18z" />
+              <path d="M6.62 10.79c1.44 2.83 3.76 5.14 6.59 6.59l2.2-2.2c.27-.27.67-.36 1.02-.24 1.12.37 2.33.57 3.57.57.55 0 1 .45 1 1V20c0 .55-.45 1-1 1-9.39 0-17-7.61-17-17 0-.55.45-1 1-1h3.5c.55 0 1 .45 1 1 0 1.25.2 2.45.57 3.57.11.35.03.74-.25 1.02l-2.2 2.2z" />
             </svg>
-            <span className="text-xs text-white/70 font-tajawal">
-              عضو مسجل رسمياً
+            <span className="text-[11px] text-white/80 font-mono">
+              {student.mobile || '–'}
             </span>
           </div>
         </div>
@@ -196,31 +205,45 @@ export const StudentCard: React.FC<StudentCardProps> = ({
       </div>
 
       {/* Card Bottom Actions Row */}
-      <div className="flex justify-between items-center px-6 pb-4 pt-0 gap-2 relative z-10 flex-wrap">
-        {canEdit ? (
+      <div className="no-print flex justify-between items-center px-6 pb-4 pt-0 gap-2 relative z-10 flex-wrap">
+        <div className="flex items-center gap-2 flex-wrap">
           <button
             type="button"
-            onClick={onOpenQuickUpload}
+            onClick={() => window.print()}
             className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border border-[rgba(232,184,75,.4)] bg-[rgba(232,184,75,.15)] text-white text-xs font-bold hover:bg-[rgba(232,184,75,.25)] transition cursor-pointer font-cairo"
+            title="طباعة بطاقة الطالب"
           >
             <svg viewBox="0 0 24 24" className="w-3.5 h-3.5 fill-gold2">
-              <path d="M12 15.2A3.2 3.2 0 0 1 8.8 12 3.2 3.2 0 0 1 12 8.8 3.2 3.2 0 0 1 15.2 12 3.2 3.2 0 0 1 12 8.8 3.2 3.2 0 0 1 15.2 12 3.2 3.2 0 0 1 12 15.2M18.2 4H16.4L14.8 2H9.2L7.6 4H5.8C4.8 4 4 4.8 4 5.8v12.4C4 19.2 4.8 20 5.8 20h12.4c1 0 1.8-.8 1.8-1.8V5.8C20 4.8 19.2 4 18.2 4z" />
+              <path d="M19 8H5c-1.66 0-3 1.34-3 3v6h4v4h12v-4h4v-6c0-1.66-1.34-3-3-3zm-3 11H8v-5h8v5zm3-7c-.55 0-1-.45-1-1s.45-1 1-1 1 .45 1 1-.45 1-1 1zm-1-9H6v4h12V3z" />
             </svg>
-            <span>رفع / تغيير صورتك</span>
+            <span>طباعة البطاقة</span>
           </button>
-        ) : (
-          <a
-            href={getLinkedInShareUrl()}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center gap-1.5 bg-[#0a66c2] hover:bg-[#0859a8] text-white px-3.5 py-2 rounded-lg text-xs font-bold shadow transition cursor-pointer font-cairo"
-          >
-            <svg viewBox="0 0 24 24" className="w-3.5 h-3.5 fill-white">
-              <path d="M19 3a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h14m-.5 15.5v-5.3a3.26 3.26 0 0 0-3.26-3.26c-.85 0-1.84.52-2.28 1.3v-1.11h-2.79v8.37h2.79v-4.93c0-.77.62-1.4 1.39-1.4a1.4 1.4 0 0 1 1.4 1.4v4.93h2.75M6.46 10.9v8.37H9.2V10.9H6.46M7.83 6.64c-.92 0-1.67.75-1.67 1.67s.75 1.67 1.67 1.67 1.67-.75 1.67-1.67-.75-1.67-1.67-1.67z" />
-            </svg>
-            <span>مشاركة على LinkedIn</span>
-          </a>
-        )}
+
+          {canEdit ? (
+            <button
+              type="button"
+              onClick={onOpenQuickUpload}
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl border border-[rgba(232,184,75,.4)] bg-[rgba(232,184,75,.15)] text-white text-xs font-bold hover:bg-[rgba(232,184,75,.25)] transition cursor-pointer font-cairo"
+            >
+              <svg viewBox="0 0 24 24" className="w-3.5 h-3.5 fill-gold2">
+                <path d="M12 15.2A3.2 3.2 0 0 1 8.8 12 3.2 3.2 0 0 1 12 8.8 3.2 3.2 0 0 1 15.2 12 3.2 3.2 0 0 1 12 8.8 3.2 3.2 0 0 1 15.2 12 3.2 3.2 0 0 1 12 15.2M18.2 4H16.4L14.8 2H9.2L7.6 4H5.8C4.8 4 4 4.8 4 5.8v12.4C4 19.2 4.8 20 5.8 20h12.4c1 0 1.8-.8 1.8-1.8V5.8C20 4.8 19.2 4 18.2 4z" />
+              </svg>
+              <span>رفع / تغيير صورتك</span>
+            </button>
+          ) : (
+            <a
+              href={getLinkedInShareUrl()}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1.5 bg-[#0a66c2] hover:bg-[#0859a8] text-white px-3.5 py-2 rounded-lg text-xs font-bold shadow transition cursor-pointer font-cairo"
+            >
+              <svg viewBox="0 0 24 24" className="w-3.5 h-3.5 fill-white">
+                <path d="M19 3a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h14m-.5 15.5v-5.3a3.26 3.26 0 0 0-3.26-3.26c-.85 0-1.84.52-2.28 1.3v-1.11h-2.79v8.37h2.79v-4.93c0-.77.62-1.4 1.39-1.4a1.4 1.4 0 0 1 1.4 1.4v4.93h2.75M6.46 10.9v8.37H9.2V10.9H6.46M7.83 6.64c-.92 0-1.67.75-1.67 1.67s.75 1.67 1.67 1.67 1.67-.75 1.67-1.67-.75-1.67-1.67-1.67z" />
+              </svg>
+              <span>مشاركة على LinkedIn</span>
+            </a>
+          )}
+        </div>
 
         {isLoggedIn ? (
           <button

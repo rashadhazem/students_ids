@@ -28,17 +28,19 @@ namespace BuaStudentApi.Controllers
         }
 
         [HttpGet("students-excel")]
+        [HttpGet("excel")]
         public async Task<IActionResult> ExportStudentsExcel(
             [FromQuery] string? college,
             [FromQuery] string? year,
             [FromQuery] string? search)
         {
-            var currentRole = User.FindFirstValue(ClaimTypes.Role) ?? "";
-            var currentCollege = User.FindFirstValue("College");
+            var currentRole = User.FindFirst(ClaimTypes.Role)?.Value;
+            var isSuperAdmin = string.Equals(currentRole, "superadmin", StringComparison.OrdinalIgnoreCase);
+            var currentCollege = User.FindFirst("college")?.Value ?? User.FindFirst("College")?.Value;
 
             var query = _context.Students.AsQueryable();
 
-            if (currentRole == "Admin" && !string.IsNullOrWhiteSpace(currentCollege))
+            if (!isSuperAdmin && !string.IsNullOrWhiteSpace(currentCollege))
             {
                 query = query.Where(s => s.College == currentCollege);
             }
@@ -49,13 +51,13 @@ namespace BuaStudentApi.Controllers
 
             if (!string.IsNullOrWhiteSpace(year))
             {
-                query = query.Where(s => s.AcademicYear == year);
+                query = query.Where(s => s.Year == year);
             }
 
             if (!string.IsNullOrWhiteSpace(search))
             {
                 var q = search.Trim().ToLower();
-                query = query.Where(s => s.StudentId.Contains(q) || s.FullName.ToLower().Contains(q) || (s.Email != null && s.Email.ToLower().Contains(q)));
+                query = query.Where(s => s.StudentId.Contains(q) || s.FullName.ToLower().Contains(q) || (s.Email != null && s.Email.ToLower().Contains(q)) || (s.NationalId != null && s.NationalId.Contains(q)));
             }
 
             var students = await query.OrderBy(s => s.College).ThenBy(s => s.StudentId).ToListAsync();
@@ -69,8 +71,11 @@ namespace BuaStudentApi.Controllers
                 "م",
                 "الرقم الجامعي",
                 "اسم الطالب",
+                "الرقم القومي",
+                "رقم الهاتف",
                 "الكلية",
                 "الفرقة الدراسية",
+                "القسم / الشعبة",
                 "البريد الإلكتروني",
                 "الصورة الشخصية",
                 "تاريخ الإضافة"
@@ -96,11 +101,14 @@ namespace BuaStudentApi.Controllers
                 worksheet.Cell(rowIdx, 1).Value = r + 1;
                 worksheet.Cell(rowIdx, 2).Value = s.StudentId;
                 worksheet.Cell(rowIdx, 3).Value = s.FullName;
-                worksheet.Cell(rowIdx, 4).Value = s.College;
-                worksheet.Cell(rowIdx, 5).Value = s.AcademicYear ?? "-";
-                worksheet.Cell(rowIdx, 6).Value = s.Email ?? "-";
-                worksheet.Cell(rowIdx, 7).Value = !string.IsNullOrWhiteSpace(s.ImagePath) ? "موجودة" : "غير متوفرة";
-                worksheet.Cell(rowIdx, 8).Value = s.CreatedAt.ToString("yyyy-MM-dd HH:mm");
+                worksheet.Cell(rowIdx, 4).Value = s.NationalId ?? "-";
+                worksheet.Cell(rowIdx, 5).Value = s.Mobile ?? "-";
+                worksheet.Cell(rowIdx, 6).Value = s.College;
+                worksheet.Cell(rowIdx, 7).Value = s.Year ?? "-";
+                worksheet.Cell(rowIdx, 8).Value = s.Section ?? "-";
+                worksheet.Cell(rowIdx, 9).Value = s.Email ?? "-";
+                worksheet.Cell(rowIdx, 10).Value = (!string.IsNullOrWhiteSpace(s.ImagePath) && !s.ImagePath.Contains("placeholder")) ? "تم الرفع" : "صورة افتراضية";
+                worksheet.Cell(rowIdx, 11).Value = s.CreatedAt.ToString("yyyy-MM-dd HH:mm");
 
                 if (r % 2 == 1)
                 {
@@ -124,12 +132,13 @@ namespace BuaStudentApi.Controllers
             [FromQuery] string? college,
             [FromQuery] string? year)
         {
-            var currentRole = User.FindFirstValue(ClaimTypes.Role) ?? "";
-            var currentCollege = User.FindFirstValue("College");
+            var currentRole = User.FindFirst(ClaimTypes.Role)?.Value;
+            var isSuperAdmin = string.Equals(currentRole, "superadmin", StringComparison.OrdinalIgnoreCase);
+            var currentCollege = User.FindFirst("college")?.Value ?? User.FindFirst("College")?.Value;
 
-            var query = _context.Students.Where(s => !string.IsNullOrEmpty(s.ImagePath));
+            var query = _context.Students.Where(s => !string.IsNullOrEmpty(s.ImagePath) && !s.ImagePath.Contains("placeholder"));
 
-            if (currentRole == "Admin" && !string.IsNullOrWhiteSpace(currentCollege))
+            if (!isSuperAdmin && !string.IsNullOrWhiteSpace(currentCollege))
             {
                 query = query.Where(s => s.College == currentCollege);
             }
@@ -140,14 +149,14 @@ namespace BuaStudentApi.Controllers
 
             if (!string.IsNullOrWhiteSpace(year))
             {
-                query = query.Where(s => s.AcademicYear == year);
+                query = query.Where(s => s.Year == year);
             }
 
             var studentsWithPhotos = await query.Select(s => new { s.StudentId, s.ImagePath, s.FullName, s.College }).ToListAsync();
 
             if (studentsWithPhotos.Count == 0)
             {
-                return BadRequest(new { success = false, message = "لم يتم العثور على أي صور للطلاب المطابقين للبحث" });
+                return BadRequest(new { success = false, message = "لم يتم العثور على أي صور شخصية معتمدة للطلاب المطابقين للبحث" });
             }
 
             var webRoot = _env.WebRootPath ?? Path.Combine(Directory.GetCurrentDirectory(), "wwwroot");

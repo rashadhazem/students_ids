@@ -7,6 +7,7 @@ using System.Text;
 using System.Text.RegularExpressions;
 using ClosedXML.Excel;
 using ExcelDataReader;
+using BuaStudentApi.DTOs;
 
 namespace BuaStudentApi.Services
 {
@@ -23,9 +24,18 @@ namespace BuaStudentApi.Services
         public int RowNumber { get; set; }
     }
 
+    public class ParsedFileResult
+    {
+        public List<ParsedStudentRow> ValidRows { get; set; } = new();
+        public List<BulkImportRowPreview> SkippedRows { get; set; } = new();
+        public int IgnoredEmptyRows { get; set; } = 0;
+        public int TotalInspectedRows { get; set; } = 0;
+    }
+
     public interface IExcelImportService
     {
         List<ParsedStudentRow> ParseFile(Stream stream, string fileName, string? userCollege = null, string? userRole = null);
+        ParsedFileResult ParseFileAdvanced(Stream stream, string fileName, string? userCollege = null, string? userRole = null);
         string MatchCollegeName(string rawName, string? rawSection = null, string? userRole = null, string? userCollege = null);
         string ExtractAcademicYear(string rawYear, string studentId, string defaultYear);
     }
@@ -105,6 +115,11 @@ namespace BuaStudentApi.Services
 
         public List<ParsedStudentRow> ParseFile(Stream stream, string fileName, string? userCollege = null, string? userRole = null)
         {
+            return ParseFileAdvanced(stream, fileName, userCollege, userRole).ValidRows;
+        }
+
+        public ParsedFileResult ParseFileAdvanced(Stream stream, string fileName, string? userCollege = null, string? userRole = null)
+        {
             var ext = Path.GetExtension(fileName).ToLowerInvariant();
             List<List<string>> rawRows = new();
 
@@ -137,9 +152,14 @@ namespace BuaStudentApi.Services
             {
                 using var workbook = new XLWorkbook(stream);
                 var worksheet = workbook.Worksheets.FirstOrDefault() ?? workbook.Worksheets.Add("Sheet1");
-                int lastCol = worksheet.LastCellUsed()?.Address.ColumnNumber ?? 1;
-                foreach (var row in worksheet.RowsUsed())
+                var lastRowUsed = worksheet.LastRowUsed();
+                int lastRow = lastRowUsed?.RowNumber() ?? 0;
+                var lastColUsed = worksheet.LastColumnUsed();
+                int lastCol = lastColUsed?.ColumnNumber() ?? 1;
+
+                for (int r = 1; r <= lastRow; r++)
                 {
+                    var row = worksheet.Row(r);
                     var cols = new List<string>();
                     for (int c = 1; c <= lastCol; c++)
                     {
@@ -149,7 +169,8 @@ namespace BuaStudentApi.Services
                 }
             }
 
-            if (rawRows.Count == 0) return new List<ParsedStudentRow>();
+            var parsedResult = new ParsedFileResult();
+            if (rawRows.Count == 0) return parsedResult;
 
             // Detect header among first 10 rows
             var allKeywords = new HashSet<string>(ColMap.Values.SelectMany(a => a).Select(NormalizeHeader));
@@ -191,13 +212,20 @@ namespace BuaStudentApi.Services
             }
 
             var headers = rawRows[bestHeaderIdx].Select(h => h.Trim()).ToList();
-            var parsed = new List<ParsedStudentRow>();
             string currentYearStr = !string.IsNullOrEmpty(preHeaderYear) ? preHeaderYear : DateTime.UtcNow.Year.ToString();
 
             for (int i = bestHeaderIdx + 1; i < rawRows.Count; i++)
             {
+                parsedResult.TotalInspectedRows++;
+                int excelRowNumber = i + 1;
                 var rowData = rawRows[i];
-                if (!rowData.Any(c => !string.IsNullOrWhiteSpace(c))) continue;
+
+                // 1. Silent skip: completely empty row in the middle or end
+                if (rowData == null || rowData.Count == 0 || rowData.All(c => string.IsNullOrWhiteSpace(c)))
+                {
+                    parsedResult.IgnoredEmptyRows++;
+                    continue;
+                }
 
                 var rowDict = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
                 for (int c = 0; c < headers.Count && c < rowData.Count; c++)
@@ -217,13 +245,47 @@ namespace BuaStudentApi.Services
                 var mobile = ToEng(FindColumn(rowDict, ColMap["mobile"]));
                 var email = ExtractEmail(rowDict);
 
-                if (string.IsNullOrWhiteSpace(sid) || string.IsNullOrWhiteSpace(name))
+                // 2. Silent skip: stray non-data row (no ID and no Name)
+                if (string.IsNullOrWhiteSpace(sid) && string.IsNullOrWhiteSpace(name))
+                {
+                    parsedResult.IgnoredEmptyRows++;
                     continue;
+                }
 
-                // Normalize mobile to standard 11-digit Egyptian format (e.g. 1014194361 -> 01014194361)
+                // 3. Validation failure: missing student code
+                if (string.IsNullOrWhiteSpace(sid))
+                {
+                    parsedResult.SkippedRows.Add(new BulkImportRowPreview
+                    {
+                        RowNumber = excelRowNumber,
+                        Sid = "—",
+                        Name = !string.IsNullOrWhiteSpace(name) ? name : "—",
+                        College = !string.IsNullOrWhiteSpace(rawColl) ? rawColl : (userCollege ?? "—"),
+                        Status = "تخطي (كود مفقود)",
+                        Reason = $"الصف {excelRowNumber}: تم تخطي الطالب ({name}) لعدم وجود كود الطالب / الرقم الجامعي"
+                    });
+                    continue;
+                }
+
+                // 4. Validation failure: missing student full name
+                if (string.IsNullOrWhiteSpace(name))
+                {
+                    parsedResult.SkippedRows.Add(new BulkImportRowPreview
+                    {
+                        RowNumber = excelRowNumber,
+                        Sid = sid,
+                        Name = "—",
+                        College = !string.IsNullOrWhiteSpace(rawColl) ? rawColl : (userCollege ?? "—"),
+                        Status = "تخطي (اسم مفقود)",
+                        Reason = $"الصف {excelRowNumber}: تم تخطي الكود ({sid}) لعدم وجود اسم الطالب"
+                    });
+                    continue;
+                }
+
+                // Normalize mobile to standard 11-digit Egyptian format
                 if (!string.IsNullOrWhiteSpace(mobile))
                 {
-                    mobile = mobile.Trim();
+                    mobile = mobile.Trim().Replace(" ", "");
                     if (mobile.Length == 10 && (mobile.StartsWith("10") || mobile.StartsWith("11") || mobile.StartsWith("12") || mobile.StartsWith("15")))
                     {
                         mobile = "0" + mobile;
@@ -239,7 +301,7 @@ namespace BuaStudentApi.Services
                 var finalYear = ExtractAcademicYear(rawYear, sid, currentYearStr);
                 var finalCollege = MatchCollegeName(rawColl, rawSection, userRole, userCollege);
 
-                parsed.Add(new ParsedStudentRow
+                parsedResult.ValidRows.Add(new ParsedStudentRow
                 {
                     StudentId = sid,
                     FullName = name,
@@ -249,11 +311,11 @@ namespace BuaStudentApi.Services
                     Email = email.ToLowerInvariant(),
                     NationalId = string.IsNullOrWhiteSpace(nationalId) ? null : nationalId.Trim(),
                     Mobile = string.IsNullOrWhiteSpace(mobile) ? null : mobile.Trim(),
-                    RowNumber = i + 1
+                    RowNumber = excelRowNumber
                 });
             }
 
-            return parsed;
+            return parsedResult;
         }
 
         private static string CleanExcelVal(object? v)

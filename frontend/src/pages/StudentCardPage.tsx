@@ -33,10 +33,6 @@ export const StudentCardPage: React.FC = () => {
   const [savingPhoto, setSavingPhoto] = useState(false);
   const [uploadProgress, setUploadProgress] = useState<number | null>(null);
 
-  // Comparison State
-  const [oldPhotoUrl, setOldPhotoUrl] = useState<string | null>(null);
-  const [newPhotoUrl, setNewPhotoUrl] = useState<string | null>(null);
-
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const imageRef = useRef<HTMLImageElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -50,7 +46,7 @@ export const StudentCardPage: React.FC = () => {
     setLoading(true);
     setErrorMsg(null);
     try {
-      const res = await apiClient.get(`/students/card/${sid}`);
+      const res = await apiClient.get(`/students/card/${sid}?_t=${Date.now()}`);
       if (res.data?.success && res.data?.student) {
         setStudent(res.data.student);
       } else {
@@ -74,12 +70,8 @@ export const StudentCardPage: React.FC = () => {
     }
   }, [studentIdentifier, user]);
 
-  // Determine if viewer can edit: Admin or same student
-  const canEdit =
-    user?.role?.toLowerCase() === 'superadmin' ||
-    user?.role?.toLowerCase() === 'admin' ||
-    user?.role?.toLowerCase() === 'staff' ||
-    (user?.studentId && student?.studentId && user.studentId === student.studentId);
+  // Photo update portal: allow student to update photo
+  const canEdit = true;
 
   // Canvas drawing routine matching Python student_card.html Math.max cover-fit
   const drawCanvas = () => {
@@ -171,15 +163,11 @@ export const StudentCardPage: React.FC = () => {
       });
 
       if (res.data?.success) {
-        const photoUrl = res.data.url || res.data.new_url;
-        const timestamped = photoUrl + (photoUrl.includes('?') ? '&' : '?') + 't=' + Date.now();
+        const photoUrl = res.data.url || res.data.new_url || student.imagePath || '';
+        const timestamped = photoUrl ? (photoUrl + (photoUrl.includes('?') ? '&' : '?') + 't=' + Date.now()) : '';
 
-        // Save comparison view
-        setOldPhotoUrl(student.imagePath || null);
-        setNewPhotoUrl(timestamped);
-
-        // Update card student object
-        setStudent(prev => prev ? { ...prev, imagePath: timestamped } : prev);
+        // Update card student object directly
+        setStudent(prev => prev ? { ...prev, imagePath: timestamped, updatedAt: new Date().toISOString() } : prev);
 
         setSelectedFile(null);
         showToast('تم اعتماد صورتك وقصها بالذكاء الاصطناعي وتحديث البطاقة بنجاح ✓', false);
@@ -275,7 +263,7 @@ export const StudentCardPage: React.FC = () => {
           <StudentCard
             student={student}
             canEdit={canEdit}
-            onOpenQuickUpload={() => setIsCropperOpen(true)}
+            onOpenQuickUpload={() => fileInputRef.current?.click()}
             isLoggedIn={isAuthenticated}
             onLogout={handleLogout}
           />
@@ -286,6 +274,7 @@ export const StudentCardPage: React.FC = () => {
             ref={fileInputRef}
             accept=".jpg,.jpeg,.png"
             className="hidden"
+            onClick={(e) => { (e.target as HTMLInputElement).value = ''; }}
             onChange={(e) => {
               if (e.target.files?.[0]) handleFileSelect(e.target.files[0]);
               e.target.value = '';
@@ -332,31 +321,9 @@ export const StudentCardPage: React.FC = () => {
                 <span>رفع وتحديث صورتك الشخصية</span>
               </h3>
 
-              {/* Comparison View (after save) */}
-              {oldPhotoUrl && newPhotoUrl && (
-                <div className="flex gap-3 mb-4">
-                  <div className="flex-1 text-center">
-                    <img
-                      src={oldPhotoUrl}
-                      alt="القديمة"
-                      className="w-full aspect-[4/5] object-cover object-top rounded-lg border-2 border-white/15 bg-navy"
-                    />
-                    <div className="text-[11px] text-white/45 mt-1.5 font-tajawal">الصورة السابقة</div>
-                  </div>
-                  <div className="flex-1 text-center">
-                    <img
-                      src={newPhotoUrl}
-                      alt="الجديدة"
-                      className="w-full aspect-[4/5] object-cover object-top rounded-lg border-2 border-emerald-400 bg-navy shadow-lg"
-                    />
-                    <div className="text-[11px] text-emerald-400 font-bold mt-1.5 font-tajawal">تم اعتمادها وقص الوجه ✓</div>
-                  </div>
-                </div>
-              )}
-
               {/* Upload Drop Zone */}
               <div
-                onClick={() => setIsCropperOpen(true)}
+                onClick={() => fileInputRef.current?.click()}
                 className="border-2 border-dashed border-white/20 hover:border-gold2/50 rounded-xl p-5 text-center cursor-pointer transition bg-white/[0.02] hover:bg-gold2/[0.04] group"
               >
                 <span className="text-3xl block mb-2 group-hover:scale-110 transition-transform">📸</span>
@@ -374,8 +341,17 @@ export const StudentCardPage: React.FC = () => {
               {/* Instant Auto-Crop & Save Confirmation Area */}
               {selectedFile && (
                 <div className="mt-4 p-4 rounded-xl border border-gold2/30 bg-black/30 text-center">
-                  <div className="text-xs text-white/90 font-bold mb-1">
-                    الملف المحدد: <span className="text-gold2">{selectedFile.name}</span>
+                  <div className="flex items-center justify-center gap-2 mb-1 flex-wrap">
+                    <span className="text-xs text-white/90 font-bold">
+                      الملف المحدد: <span className="text-gold2">{selectedFile.name}</span>
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      className="text-xs text-gold2 hover:text-white underline font-cairo cursor-pointer bg-transparent border-0 font-bold"
+                    >
+                      (تغيير الصورة ⟳)
+                    </button>
                   </div>
                   <div className="text-[11px] text-white/60 mb-3 font-tajawal">
                     جاهز للاعتماد والقص التلقائي على الوجه بأبعاد (400×500)
@@ -443,10 +419,9 @@ export const StudentCardPage: React.FC = () => {
           college={student.college}
           initialFile={selectedFile}
           onSuccess={(newImgPath) => {
-            const timestamped = newImgPath + (newImgPath.includes('?') ? '&' : '?') + 't=' + Date.now();
-            setOldPhotoUrl(student.imagePath || null);
-            setNewPhotoUrl(timestamped);
-            setStudent(prev => prev ? { ...prev, imagePath: timestamped } : prev);
+            const pathStr = newImgPath || student.imagePath || '';
+            const timestamped = pathStr ? (pathStr + (pathStr.includes('?') ? '&' : '?') + 't=' + Date.now()) : '';
+            setStudent(prev => prev ? { ...prev, imagePath: timestamped, updatedAt: new Date().toISOString() } : prev);
             setIsCropperOpen(false);
             setSelectedFile(null);
             showToast('تم اعتماد صورتك وقص الوجه وتحديث البطاقة بنجاح ✓', false);

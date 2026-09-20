@@ -19,6 +19,7 @@ interface AuthContextType {
   login: (credentials: { username: string; password: string }) => Promise<{ success: boolean; message?: string; user?: UserProfile }>;
   studentLogin: (credentials: { email: string; nationalId: string }) => Promise<{ success: boolean; message?: string; user?: UserProfile }>;
   logout: () => void;
+  updateCurrentUser: (newUser: UserProfile, newToken?: string) => void;
   loading: boolean;
   isAuthenticated: boolean;
   isSuperAdmin: boolean;
@@ -99,6 +100,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
+  const updateCurrentUser = (newUser: UserProfile, newToken?: string) => {
+    setUser(newUser);
+    localStorage.setItem('bua_user', JSON.stringify(newUser));
+    if (newToken) {
+      setToken(newToken);
+      localStorage.setItem('bua_token', newToken);
+    }
+  };
+
   const logout = () => {
     localStorage.removeItem('bua_token');
     localStorage.removeItem('bua_user');
@@ -120,6 +130,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         login,
         studentLogin,
         logout,
+        updateCurrentUser,
         loading,
         isAuthenticated: !!user,
         isSuperAdmin,

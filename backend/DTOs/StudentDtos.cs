@@ -83,8 +83,6 @@ namespace BuaStudentApi.DTOs
 
         public string? Mobile { get; set; }
 
-        [Required(ErrorMessage = "يرجى إدخال البريد الإلكتروني")]
-        [EmailAddress(ErrorMessage = "صيغة البريد الإلكتروني غير صحيحة")]
-        public string Email { get; set; } = string.Empty;
+        public string? Email { get; set; }
     }
 }

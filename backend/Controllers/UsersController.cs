@@ -55,15 +55,16 @@ namespace BuaStudentApi.Controllers
             [FromQuery] int page = 1,
             [FromQuery] int pageSize = 20)
         {
-            var currentRole = User.FindFirstValue(ClaimTypes.Role) ?? "";
-            var currentCollege = User.FindFirstValue("College");
+            var currentRole = User.FindFirst(ClaimTypes.Role)?.Value ?? "";
+            var isSuperAdmin = string.Equals(currentRole, "superadmin", StringComparison.OrdinalIgnoreCase);
+            var currentCollege = User.FindFirst("college")?.Value ?? User.FindFirst("College")?.Value;
 
             var query = _context.Users
                 .Where(u => u.Role != "student" && u.Role != "Student")
                 .AsQueryable();
 
             // Admin college isolation
-            if (currentRole == "Admin" && !string.IsNullOrWhiteSpace(currentCollege))
+            if (!isSuperAdmin && !string.IsNullOrWhiteSpace(currentCollege))
             {
                 query = query.Where(u => u.College == currentCollege);
             }
@@ -132,10 +133,11 @@ namespace BuaStudentApi.Controllers
             if (user == null)
                 return NotFound(new { success = false, message = "المستخدم غير موجود" });
 
-            var currentRole = User.FindFirstValue(ClaimTypes.Role) ?? "";
-            var currentCollege = User.FindFirstValue("College");
-            if (currentRole == "Admin" && !string.IsNullOrWhiteSpace(currentCollege) && user.College != currentCollege)
-                return Forbid();
+            var currentRole = User.FindFirst(ClaimTypes.Role)?.Value ?? "";
+            var isSuperAdmin = string.Equals(currentRole, "superadmin", StringComparison.OrdinalIgnoreCase);
+            var currentCollege = User.FindFirst("college")?.Value ?? User.FindFirst("College")?.Value;
+            if (!isSuperAdmin && !string.IsNullOrWhiteSpace(currentCollege) && user.College != currentCollege)
+                return StatusCode(403, new { success = false, message = "غير مصرح لك باستعراض بيانات هذا المستخدم" });
 
             return Ok(new
             {
@@ -162,12 +164,13 @@ namespace BuaStudentApi.Controllers
             if (string.IsNullOrWhiteSpace(request.Username) || string.IsNullOrWhiteSpace(request.Password))
                 return BadRequest(new { success = false, message = "اسم المستخدم وكلمة المرور مطلوبان" });
 
-            var currentRole = User.FindFirstValue(ClaimTypes.Role) ?? "";
-            var currentCollege = User.FindFirstValue("College");
+            var currentRole = User.FindFirst(ClaimTypes.Role)?.Value ?? "";
+            var isSuperAdmin = string.Equals(currentRole, "superadmin", StringComparison.OrdinalIgnoreCase);
+            var currentCollege = User.FindFirst("college")?.Value ?? User.FindFirst("College")?.Value;
 
-            if (currentRole == "Admin")
+            if (!isSuperAdmin)
             {
-                if (request.Role == "SuperAdmin" || request.Role == "Admin")
+                if (string.Equals(request.Role, "superadmin", StringComparison.OrdinalIgnoreCase) || string.Equals(request.Role, "admin", StringComparison.OrdinalIgnoreCase))
                     return BadRequest(new { success = false, message = "غير مصرح لك بإنشاء حساب مسؤول أو مدير نظام" });
 
                 request.College = currentCollege;

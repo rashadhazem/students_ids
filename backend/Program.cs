@@ -155,9 +155,15 @@ builder.Services.AddSingleton<IJobManagerService, JobManagerService>();
 builder.Services.AddSignalR();
 
 // 4. JWT Authentication
-var jwtSecret = builder.Configuration["Jwt:SecretKey"] ?? "BUA_Enterprise_Ultra_Secure_Secret_Key_2025_Long_Enough_256_Bits!";
-var jwtIssuer = builder.Configuration["Jwt:Issuer"] ?? "BuaStudentApi";
-var jwtAudience = builder.Configuration["Jwt:Audience"] ?? "BuaStudentApp";
+var jwtSecret = Environment.GetEnvironmentVariable("JWT_SECRET_KEY") 
+    ?? builder.Configuration["Jwt:SecretKey"] 
+    ?? "BUA_Enterprise_Ultra_Secure_Secret_Key_2025_Long_Enough_256_Bits!";
+var jwtIssuer = Environment.GetEnvironmentVariable("JWT_ISSUER") 
+    ?? builder.Configuration["Jwt:Issuer"] 
+    ?? "BuaStudentApi";
+var jwtAudience = Environment.GetEnvironmentVariable("JWT_AUDIENCE") 
+    ?? builder.Configuration["Jwt:Audience"] 
+    ?? "BuaStudentApp";
 
 builder.Services.AddAuthentication(options =>
 {
@@ -180,7 +186,7 @@ builder.Services.AddAuthentication(options =>
         ClockSkew = TimeSpan.Zero
     };
 
-    // Allow SignalR to read token from Query String (?access_token=...)
+    // Allow SignalR to read token from Query String (?access_token=...) or HttpOnly Cookie
     options.Events = new JwtBearerEvents
     {
         OnMessageReceived = context =>
@@ -191,6 +197,10 @@ builder.Services.AddAuthentication(options =>
             {
                 context.Token = accessToken;
             }
+            else if (string.IsNullOrEmpty(context.Token) && context.Request.Cookies.TryGetValue("bua_access_token", out var cookieToken) && !string.IsNullOrEmpty(cookieToken))
+            {
+                context.Token = cookieToken;
+            }
             return Task.CompletedTask;
         }
     };
@@ -199,7 +209,9 @@ builder.Services.AddAuthentication(options =>
 builder.Services.AddAuthorization();
 
 // 5. CORS Policy
-var allowedOrigins = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? new[]
+var envAllowedOrigins = Environment.GetEnvironmentVariable("ALLOWED_ORIGINS")?
+    .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+var allowedOrigins = envAllowedOrigins ?? builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>() ?? new[]
 {
     "http://localhost:5173",
     "http://127.0.0.1:5173",
@@ -268,8 +280,23 @@ using (var scope = app.Services.CreateScope())
     // Ensure database tables exist
     db.Database.EnsureCreated();
 
-    // High Concurrency: Configure SQLite WAL mode & connection busy timeout
-    if (!dbProvider.Equals("Postgres", StringComparison.OrdinalIgnoreCase))
+    // High Concurrency: Database optimizations
+    if (dbProvider.Equals("Postgres", StringComparison.OrdinalIgnoreCase))
+    {
+        try
+        {
+            db.Database.ExecuteSqlRaw("CREATE INDEX IF NOT EXISTS ix_students_national_id ON students(national_id);");
+            db.Database.ExecuteSqlRaw("CREATE INDEX IF NOT EXISTS ix_students_section ON students(section);");
+            db.Database.ExecuteSqlRaw("CREATE INDEX IF NOT EXISTS ix_students_college ON students(college);");
+            db.Database.ExecuteSqlRaw("CREATE INDEX IF NOT EXISTS ix_students_year ON students(year);");
+            db.Database.ExecuteSqlRaw("CREATE INDEX IF NOT EXISTS ix_users_student_id ON users(student_id);");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[PostgreSQL Index Warning]: {ex.Message}");
+        }
+    }
+    else
     {
         try
         {
@@ -360,6 +387,12 @@ app.MapGet("/health", () => Results.Ok(new
     timestamp = DateTime.UtcNow,
     uptime = (DateTime.UtcNow - System.Diagnostics.Process.GetCurrentProcess().StartTime.ToUniversalTime()).ToString(@"d\.hh\:mm\:ss")
 })).AllowAnonymous();
+
+// Forwarded Headers for Reverse Proxy (Nginx, Cloudflare, etc.)
+app.UseForwardedHeaders(new ForwardedHeadersOptions
+{
+    ForwardedHeaders = Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedFor | Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedProto
+});
 
 app.UseResponseCompression();  // Must be before any response-writing middleware
 app.UseRouting();
