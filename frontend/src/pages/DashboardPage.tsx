@@ -273,117 +273,75 @@ export const DashboardPage: React.FC = () => {
         </div>
       )}
 
-      {/* 5. TWO COLUMN SECTION: Recent Students + System info */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 mb-6">
-        {/* Recent Students Table (takes 2 cols) */}
-        <div className="lg:col-span-2 bua-card">
-          <div className="bua-card-header bg-[#fafbfd] justify-between">
-            <div className="flex items-center gap-2">
-              <svg viewBox="0 0 24 24" className="w-4 h-4 fill-gold">
-                <path d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5z" />
-              </svg>
-              <h2>أحدث الطلاب المسجلين بالجامعة</h2>
-            </div>
-            <Link to="/students" className="bua-btn bua-btn-outline bua-btn-sm text-xs">
-              عرض الكل
-            </Link>
+      {/* 5. Recent Students Section */}
+      <div className="bua-card mb-6">
+        <div className="bua-card-header bg-[#fafbfd] justify-between">
+          <div className="flex items-center gap-2">
+            <svg viewBox="0 0 24 24" className="w-4 h-4 fill-gold">
+              <path d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5c-1.66 0-3 1.34-3 3s1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5C6.34 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5z" />
+            </svg>
+            <h2>أحدث الطلاب المسجلين بالجامعة</h2>
           </div>
-
-          <div className="bua-tbl-wrap">
-            <table className="bua-table">
-              <thead>
-                <tr>
-                  <th>الصورة</th>
-                  <th>الاسم الكامل</th>
-                  <th>البريد الإلكتروني</th>
-                  <th>رقم التليفون</th>
-                  <th>الكلية</th>
-                  <th>إجراء</th>
-                </tr>
-              </thead>
-              <tbody>
-                {stats?.recentStudents && stats.recentStudents.length > 0 ? (
-                  stats.recentStudents.map((s) => (
-                    <tr key={s.id}>
-                      <td>
-                        <img
-                          src={getPhotoUrl(s.imagePath)}
-                          alt={s.fullName}
-                          className="student-thumb"
-                          onError={(e) => {
-                            (e.target as HTMLImageElement).src = `${API_BASE_URL}/api/photos/placeholder`;
-                          }}
-                        />
-                      </td>
-                      <td className="font-bold text-navy">{s.fullName}</td>
-                      <td className="text-muted text-xs font-mono" dir="ltr">
-                        {s.email || '–'}
-                      </td>
-                      <td className="text-muted text-xs font-mono" dir="ltr">
-                        {s.mobile || '–'}
-                      </td>
-                      <td>
-                        <span className="college-tag">{s.college}</span>
-                      </td>
-                      <td>
-                        <Link
-                          to={`/card?id=${s.studentId}`}
-                          className="bua-btn bua-btn-outline bua-btn-sm text-xs"
-                        >
-                          بطاقة
-                        </Link>
-                      </td>
-                    </tr>
-                  ))
-                ) : (
-                  <tr>
-                    <td colSpan={6} className="text-center py-6 text-muted font-tajawal">
-                      {loading ? 'جارٍ تحميل الطلاب…' : 'لا يوجد طلاب مسجلون حالياً'}
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
-          </div>
+          <Link to="/students" className="bua-btn bua-btn-outline bua-btn-sm text-xs">
+            عرض الكل
+          </Link>
         </div>
 
-        {/* System Info / Security Status Card */}
-        <div className="bua-card">
-          <div className="bua-card-header bg-[#fafbfd]">
-            <svg viewBox="0 0 24 24" className="w-4 h-4 fill-blue">
-              <path d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm0 10.99h7c-.53 4.12-3.28 7.79-7 8.94V12H5V6.3l7-3.11v8.8z" />
-            </svg>
-            <h2>حالة المنظومة والأمان</h2>
-          </div>
-          <div className="bua-card-body space-y-3.5 text-xs font-tajawal">
-            <div className="flex items-center justify-between p-2.5 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800">
-              <span className="font-bold">خادم ASP.NET Core 8:</span>
-              <span className="font-mono font-bold">متصل وفعال (HTTP 200)</span>
-            </div>
-
-            <div className="flex items-center justify-between p-2.5 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-800">
-              <span className="font-bold">قاعدة البيانات:</span>
-              <span className="font-mono font-bold">PostgreSQL 16 (bua_db) ✓</span>
-            </div>
-
-            <div className="flex items-center justify-between p-2.5 rounded-lg bg-amber-50 border border-amber-200 text-amber-900">
-              <span className="font-bold">معالجة الصور:</span>
-              <span>SixLabors.ImageSharp (400x500 4:5)</span>
-            </div>
-
-            <div className="flex items-center justify-between p-2.5 rounded-lg bg-slate-50 border border-slate-200 text-slate-700">
-              <span className="font-bold">التحديث اللحظي:</span>
-              <span className="flex items-center gap-1.5">
-                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-                <span>SignalR Hub نشط</span>
-              </span>
-            </div>
-
-            <div className="pt-2 border-t border-slate-100 flex justify-between items-center text-muted">
-              <span>الإصدار:</span>
-              <span className="font-mono">v2.0 (Dual Stack Ready)</span>
-            </div>
-          </div>
+        <div className="bua-tbl-wrap">
+          <table className="bua-table">
+            <thead>
+              <tr>
+                <th>الصورة</th>
+                <th>الاسم الكامل</th>
+                <th>البريد الإلكتروني</th>
+                <th>رقم التليفون</th>
+                <th>الكلية</th>
+                <th>إجراء</th>
+              </tr>
+            </thead>
+            <tbody>
+              {stats?.recentStudents && stats.recentStudents.length > 0 ? (
+                stats.recentStudents.map((s) => (
+                  <tr key={s.id}>
+                    <td>
+                      <img
+                        src={getPhotoUrl(s.imagePath)}
+                        alt={s.fullName}
+                        className="student-thumb"
+                        onError={(e) => {
+                          (e.target as HTMLImageElement).src = `${API_BASE_URL}/api/photos/placeholder`;
+                        }}
+                      />
+                    </td>
+                    <td className="font-bold text-navy">{s.fullName}</td>
+                    <td className="text-muted text-xs font-mono" dir="ltr">
+                      {s.email || '–'}
+                    </td>
+                    <td className="text-muted text-xs font-mono" dir="ltr">
+                      {s.mobile || '–'}
+                    </td>
+                    <td>
+                      <span className="college-tag">{s.college}</span>
+                    </td>
+                    <td>
+                      <Link
+                        to={`/card?id=${s.studentId}`}
+                        className="bua-btn bua-btn-outline bua-btn-sm text-xs"
+                      >
+                        بطاقة
+                      </Link>
+                    </td>
+                  </tr>
+                ))
+              ) : (
+                <tr>
+                  <td colSpan={6} className="text-center py-6 text-muted font-tajawal">
+                    {loading ? 'جارٍ تحميل الطلاب…' : 'لا يوجد طلاب مسجلون حالياً'}
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
         </div>
       </div>
     </div>
