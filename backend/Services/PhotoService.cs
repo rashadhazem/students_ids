@@ -437,8 +437,24 @@ namespace BuaStudentApi.Services
             {
                 cleanStudentId = Guid.NewGuid().ToString("N");
             }
-            var cleanYear = Regex.Replace(year ?? "2026", @"[^a-zA-Z0-9_\u0621-\u064A-]", "").Trim();
-            if (string.IsNullOrEmpty(cleanYear)) cleanYear = "2026";
+            // Determine year folder (extract 4-digit year or clean year string)
+            string cleanYear = "2026";
+            if (!string.IsNullOrWhiteSpace(year))
+            {
+                var ym = Regex.Match(year, @"(20\d{2})");
+                if (ym.Success)
+                {
+                    cleanYear = ym.Value;
+                }
+                else
+                {
+                    cleanYear = Regex.Replace(year.Trim(), @"[\s/\\:*?""<>|]+", "_");
+                }
+            }
+            else if (cleanStudentId.Length >= 4 && int.TryParse(cleanStudentId[..4], out var y) && y >= 2018 && y <= DateTime.UtcNow.Year + 2)
+            {
+                cleanYear = y.ToString();
+            }
 
             var collegeFolder = SanitizeCollegeFolderName(college);
             var relativeDir = Path.Combine("uploads", cleanYear, collegeFolder);

@@ -152,7 +152,7 @@ namespace BuaStudentApi.Controllers
                 query = query.Where(s => s.Year == year);
             }
 
-            var studentsWithPhotos = await query.Select(s => new { s.StudentId, s.ImagePath, s.FullName, s.College }).ToListAsync();
+            var studentsWithPhotos = await query.Select(s => new { s.StudentId, s.ImagePath, s.FullName, s.College, s.Year }).ToListAsync();
 
             if (studentsWithPhotos.Count == 0)
             {
@@ -164,6 +164,8 @@ namespace BuaStudentApi.Controllers
             using var memoryStream = new MemoryStream();
             using (var archive = new ZipArchive(memoryStream, ZipArchiveMode.Create, true))
             {
+                var addedEntries = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
                 foreach (var s in studentsWithPhotos)
                 {
                     if (string.IsNullOrEmpty(s.ImagePath)) continue;
@@ -171,11 +173,41 @@ namespace BuaStudentApi.Controllers
 
                     if (System.IO.File.Exists(fullPath))
                     {
-                        var entryName = $"{s.College}/{s.StudentId}_{s.FullName.Replace(' ', '_')}.jpg";
-                        var entry = archive.CreateEntry(entryName, CompressionLevel.Fastest);
-                        using var entryStream = entry.Open();
-                        using var fileStream = System.IO.File.OpenRead(fullPath);
-                        await fileStream.CopyToAsync(entryStream);
+                        // 1. Year folder (e.g. "2026", "2025")
+                        string yearFolder = "2026";
+                        if (!string.IsNullOrWhiteSpace(s.Year))
+                        {
+                            var ym = System.Text.RegularExpressions.Regex.Match(s.Year, @"(20\d{2})");
+                            if (ym.Success)
+                            {
+                                yearFolder = ym.Value;
+                            }
+                            else
+                            {
+                                yearFolder = System.Text.RegularExpressions.Regex.Replace(s.Year.Trim(), @"[\s/\\:*?""<>|]+", "_");
+                            }
+                        }
+                        else if (!string.IsNullOrWhiteSpace(s.StudentId) && s.StudentId.Length >= 4 && int.TryParse(s.StudentId[..4], out var y) && y >= 2018 && y <= DateTime.UtcNow.Year + 2)
+                        {
+                            yearFolder = y.ToString();
+                        }
+
+                        // 2. College folder
+                        var collegeFolder = string.IsNullOrWhiteSpace(s.College) ? "عام" : System.Text.RegularExpressions.Regex.Replace(s.College.Trim(), @"[\s/\\:*?""<>|]+", "_");
+
+                        // 3. File name: ID only
+                        var cleanId = string.IsNullOrWhiteSpace(s.StudentId) ? Path.GetFileNameWithoutExtension(fullPath) : s.StudentId.Trim();
+                        var ext = Path.GetExtension(fullPath);
+                        if (string.IsNullOrEmpty(ext)) ext = ".jpg";
+
+                        var entryName = $"{yearFolder}/{collegeFolder}/{cleanId}{ext}";
+                        if (addedEntries.Add(entryName))
+                        {
+                            var entry = archive.CreateEntry(entryName, CompressionLevel.Fastest);
+                            using var entryStream = entry.Open();
+                            using var fileStream = System.IO.File.OpenRead(fullPath);
+                            await fileStream.CopyToAsync(entryStream);
+                        }
                     }
                 }
             }
