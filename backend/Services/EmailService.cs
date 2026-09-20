@@ -30,12 +30,21 @@ namespace BuaStudentApi.Services
 
         public async Task SendEmailAsync(string to, string subject, string htmlContent)
         {
-            var server = _config["Mail:Server"] ?? _config["EmailSettings:SmtpHost"] ?? "smtp.gmail.com";
-            var portStr = _config["Mail:Port"] ?? _config["EmailSettings:SmtpPort"];
-            var port = int.TryParse(portStr, out var p) ? p : 587;
-            var username = _config["Mail:Username"] ?? _config["EmailSettings:SmtpUser"];
-            var password = _config["Mail:Password"] ?? _config["EmailSettings:SmtpPass"];
-            var from = _config["Mail:From"] ?? _config["EmailSettings:SenderEmail"] ?? username ?? "noreply@bua.edu.eg";
+            var server = _config["MAIL_SERVER"] ?? _config["Mail:Server"] ?? _config["EmailSettings:SmtpHost"] ?? "smtp.gmail.com";
+            var portStr = _config["MAIL_PORT"] ?? _config["Mail:Port"] ?? _config["EmailSettings:SmtpPort"];
+            var port = int.TryParse(portStr, out var p) ? p : 465;
+            var username = _config["MAIL_USERNAME"] ?? _config["Mail:Username"] ?? _config["EmailSettings:SmtpUser"];
+            var rawPassword = _config["MAIL_PASSWORD"] ?? _config["Mail:Password"] ?? _config["EmailSettings:SmtpPass"];
+            var password = rawPassword != null ? rawPassword.Replace(" ", "").Trim() : "";
+            var from = _config["MAIL_DEFAULT_SENDER"] ?? _config["Mail:From"] ?? _config["EmailSettings:SenderEmail"] ?? username ?? "student.affairs.bua@gmail.com";
+            var senderName = _config["EmailSettings:SenderName"] ?? "جامعة بدر بأسيوط - شؤون الطلاب";
+
+            var sslStr = _config["MAIL_USE_SSL"] ?? _config["EmailSettings:EnableSsl"];
+            bool useSsl = port == 465;
+            if (!string.IsNullOrEmpty(sslStr) && bool.TryParse(sslStr, out var parsedSsl))
+            {
+                useSsl = parsedSsl;
+            }
 
             if (string.IsNullOrEmpty(username) || string.IsNullOrEmpty(password))
             {
@@ -46,7 +55,7 @@ namespace BuaStudentApi.Services
             try
             {
                 var message = new MimeMessage();
-                message.From.Add(new MailboxAddress("جامعة بدر بأسيوط", from));
+                message.From.Add(new MailboxAddress(senderName, from));
                 message.To.Add(new MailboxAddress("", to));
                 message.Subject = subject;
 
@@ -54,15 +63,18 @@ namespace BuaStudentApi.Services
                 message.Body = bodyBuilder.ToMessageBody();
 
                 using var client = new SmtpClient();
-                await client.ConnectAsync(server, port, SecureSocketOptions.StartTls);
+                // Gmail SSL on port 465 requires SslOnConnect; port 587 requires StartTls
+                var socketOption = (useSsl || port == 465) ? SecureSocketOptions.SslOnConnect : SecureSocketOptions.StartTls;
+
+                await client.ConnectAsync(server, port, socketOption);
                 await client.AuthenticateAsync(username, password);
                 await client.SendAsync(message);
                 await client.DisconnectAsync(true);
-                _logger.LogInformation("Email sent successfully to {To}", to);
+                _logger.LogInformation("Email sent successfully to {To} via {Server}:{Port} (SSL={UseSsl})", to, server, port, socketOption == SecureSocketOptions.SslOnConnect);
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Failed to send email to {To}", to);
+                _logger.LogError(ex, "Failed to send email to {To} via {Server}:{Port}", to, server, port);
             }
         }
 

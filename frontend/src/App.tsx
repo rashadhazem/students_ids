@@ -12,6 +12,7 @@ import { StudentCardPage } from './pages/StudentCardPage';
 import { UsersPage } from './pages/UsersPage';
 import { AuditPage } from './pages/AuditPage';
 import { ExportPage } from './pages/ExportPage';
+import { ResetPasswordPage } from './pages/ResetPasswordPage';
 
 // Protected Route Component
 const ProtectedRoute: React.FC<{ children: React.ReactNode; allowedRoles?: string[] }> = ({
@@ -77,8 +78,9 @@ export const App: React.FC = () => {
     <AuthProvider>
       <BrowserRouter>
         <Routes>
-          {/* Public Login */}
+          {/* Public Login & Password Reset */}
           <Route path="/login" element={<LoginPage />} />
+          <Route path="/reset-password" element={<ResetPasswordPage />} />
 
           {/* Standalone Student Card (matching student_card.html full screen) */}
           <Route path="/card" element={<StudentCardPage />} />
