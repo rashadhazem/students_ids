@@ -73,8 +73,11 @@ def _get_yunet_detector():
         candidate_paths = [
             os.path.join(os.path.dirname(__file__), "models", _YUNET_MODEL_NAME),
             os.path.join(os.path.dirname(__file__), _YUNET_MODEL_NAME),
+            os.path.join(os.getcwd(), "ai", "models", _YUNET_MODEL_NAME),
             os.path.join(os.getcwd(), "models", _YUNET_MODEL_NAME),
             os.path.join(os.getcwd(), _YUNET_MODEL_NAME),
+            f"/app/ai/models/{_YUNET_MODEL_NAME}",
+            f"/app/models/{_YUNET_MODEL_NAME}"
         ]
         for p in candidate_paths:
             if os.path.exists(p) and os.path.getsize(p) > 100000:

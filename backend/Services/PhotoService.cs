@@ -94,7 +94,8 @@ namespace BuaStudentApi.Services
         {
             try
             {
-                using var req = new System.Net.Http.HttpRequestMessage(System.Net.Http.HttpMethod.Post, "http://127.0.0.1:5005/crop");
+                var cropperUrl = Environment.GetEnvironmentVariable("CROPPER_URL") ?? "http://127.0.0.1:5005/crop";
+                using var req = new System.Net.Http.HttpRequestMessage(System.Net.Http.HttpMethod.Post, cropperUrl);
                 req.Content = new System.Net.Http.ByteArrayContent(rawBytes);
                 req.Headers.Add("X-Crop-Zoom", zoom.ToString(System.Globalization.CultureInfo.InvariantCulture));
                 req.Headers.Add("X-Crop-Rotation", rotation.ToString());
@@ -140,7 +141,8 @@ namespace BuaStudentApi.Services
                 {
                     Path.Combine(AppContext.BaseDirectory, "ai", "smart_cropper_cli.py"),
                     Path.Combine(Directory.GetCurrentDirectory(), "ai", "smart_cropper_cli.py"),
-                    Path.Combine(Directory.GetCurrentDirectory(), "backend", "ai", "smart_cropper_cli.py")
+                    Path.Combine(Directory.GetCurrentDirectory(), "backend", "ai", "smart_cropper_cli.py"),
+                    "/app/ai/smart_cropper_cli.py"
                 };
 
                 var cliScript = candidatePaths.FirstOrDefault(System.IO.File.Exists);
@@ -156,9 +158,12 @@ namespace BuaStudentApi.Services
                 var fhStr = flipH ? "true" : "false";
                 var acStr = autoCrop ? "true" : "false";
 
+                var pythonExecutable = Environment.GetEnvironmentVariable("PYTHON_PATH")
+                    ?? (OperatingSystem.IsWindows() ? "python" : "python3");
+
                 var psi = new System.Diagnostics.ProcessStartInfo
                 {
-                    FileName = "python",
+                    FileName = pythonExecutable,
                     Arguments = $"\"{cliScript}\" \"{tempIn}\" \"{tempOut}\" {zStr} {rotation} {fhStr} {oxStr} {oyStr} {acStr}",
                     CreateNoWindow = true,
                     UseShellExecute = false,
