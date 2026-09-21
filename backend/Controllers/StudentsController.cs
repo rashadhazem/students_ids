@@ -64,6 +64,41 @@ namespace BuaStudentApi.Controllers
                 .Select(g => new { college = g.Key, count = g.Count() })
                 .OrderByDescending(x => x.count)
                 .ToListAsync();
+
+            // Calculate academic level distribution based on 2026 academic year
+            var rawYearDist = await query
+                .GroupBy(s => s.Year)
+                .Select(g => new { year = g.Key, count = g.Count() })
+                .ToListAsync();
+
+            var levelMap = new Dictionary<string, int>
+            {
+                ["الفرقة الأولى (2026)"] = 0,
+                ["الفرقة الثانية (2025)"] = 0,
+                ["الفرقة الثالثة (2024)"] = 0,
+                ["الفرقة الرابعة (2023)"] = 0,
+                ["الفرقة الخامسة (2022)"] = 0,
+                ["الفرقة السادسة (2021)"] = 0,
+                ["أخرى"] = 0
+            };
+
+            foreach (var item in rawYearDist)
+            {
+                var y = (item.year ?? "").Trim();
+                if (y == "2026" || y.Contains("أول") || y == "1") levelMap["الفرقة الأولى (2026)"] += item.count;
+                else if (y == "2025" || y.Contains("ثان") || y == "2") levelMap["الفرقة الثانية (2025)"] += item.count;
+                else if (y == "2024" || y.Contains("ثالث") || y == "3") levelMap["الفرقة الثالثة (2024)"] += item.count;
+                else if (y == "2023" || y.Contains("رابع") || y == "4") levelMap["الفرقة الرابعة (2023)"] += item.count;
+                else if (y == "2022" || y.Contains("خامس") || y == "5") levelMap["الفرقة الخامسة (2022)"] += item.count;
+                else if (y == "2021" || y.Contains("سادس") || y == "6") levelMap["الفرقة السادسة (2021)"] += item.count;
+                else levelMap["أخرى"] += item.count;
+            }
+
+            var levelDist = levelMap
+                .Where(x => x.Value > 0)
+                .Select(x => new { level = x.Key, count = x.Value })
+                .ToList();
+
             var recent = await query
                 .OrderByDescending(s => s.CreatedAt)
                 .Take(5)
@@ -89,13 +124,13 @@ namespace BuaStudentApi.Controllers
                 studentsWithoutPhotos = total - withPhotos,
                 totalColleges = collegeDist.Count,
                 collegeDistribution = collegeDist,
+                levelDistribution = levelDist,
                 recentStudents = recent
             });
         }
 
         [HttpGet]
         [Authorize(Roles = "SuperAdmin,Admin,Officer,Staff,superadmin,admin,officer,staff")]
-
         public async Task<IActionResult> GetStudents(
             [FromQuery] string? q,
             [FromQuery] string? search,
@@ -135,7 +170,35 @@ namespace BuaStudentApi.Controllers
 
             if (!string.IsNullOrWhiteSpace(year))
             {
-                query = query.Where(s => s.Year == year.Trim());
+                var yTrim = year.Trim();
+                if (yTrim == "2026" || yTrim.Contains("أول") || yTrim == "1")
+                {
+                    query = query.Where(s => s.Year == "2026" || s.Year.Contains("أول") || s.Year == "1" || s.StudentId.StartsWith("2026"));
+                }
+                else if (yTrim == "2025" || yTrim.Contains("ثان") || yTrim == "2")
+                {
+                    query = query.Where(s => s.Year == "2025" || s.Year.Contains("ثان") || s.Year == "2" || s.StudentId.StartsWith("2025"));
+                }
+                else if (yTrim == "2024" || yTrim.Contains("ثالث") || yTrim == "3")
+                {
+                    query = query.Where(s => s.Year == "2024" || s.Year.Contains("ثالث") || s.Year == "3" || s.StudentId.StartsWith("2024"));
+                }
+                else if (yTrim == "2023" || yTrim.Contains("رابع") || yTrim == "4")
+                {
+                    query = query.Where(s => s.Year == "2023" || s.Year.Contains("رابع") || s.Year == "4" || s.StudentId.StartsWith("2023"));
+                }
+                else if (yTrim == "2022" || yTrim.Contains("خامس") || yTrim == "5")
+                {
+                    query = query.Where(s => s.Year == "2022" || s.Year.Contains("خامس") || s.Year == "5" || s.StudentId.StartsWith("2022"));
+                }
+                else if (yTrim == "2021" || yTrim.Contains("سادس") || yTrim == "6")
+                {
+                    query = query.Where(s => s.Year == "2021" || s.Year.Contains("سادس") || s.Year == "6" || s.StudentId.StartsWith("2021"));
+                }
+                else
+                {
+                    query = query.Where(s => s.Year == yTrim || s.StudentId.StartsWith(yTrim));
+                }
             }
 
             if (!string.IsNullOrWhiteSpace(searchTerm))

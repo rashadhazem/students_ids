@@ -405,17 +405,35 @@ namespace BuaStudentApi.Services
 
         public string ExtractAcademicYear(string rawYear, string studentId, string defaultYear)
         {
+            // 1. First priority: Resolve from the first 4 digits of Student Code (e.g. 2026xxx -> 2026)
+            if (!string.IsNullOrWhiteSpace(studentId))
+            {
+                var cleanId = ToEng(studentId).Trim();
+                if (cleanId.Length >= 4)
+                {
+                    var prefix = cleanId[..4];
+                    if (int.TryParse(prefix, out var yr) && yr >= 2018 && yr <= 2030)
+                    {
+                        return prefix;
+                    }
+                }
+            }
+
+            // 2. Second priority: If raw year column is provided, parse text or year number
             if (!string.IsNullOrWhiteSpace(rawYear))
             {
-                var m = Regex.Match(rawYear, @"(20\d{2})");
+                var clean = rawYear.Trim();
+                if (clean.Contains("أول") || clean == "1") return "2026";
+                if (clean.Contains("ثان") || clean == "2") return "2025";
+                if (clean.Contains("ثالث") || clean == "3") return "2024";
+                if (clean.Contains("رابع") || clean == "4") return "2023";
+                if (clean.Contains("خامس") || clean == "5") return "2022";
+                if (clean.Contains("سادس") || clean == "6") return "2021";
+
+                var m = Regex.Match(clean, @"(20\d{2})");
                 if (m.Success) return m.Groups[1].Value;
             }
-            if (!string.IsNullOrWhiteSpace(studentId) && studentId.Length >= 4)
-            {
-                var prefix = studentId[..4];
-                if (int.TryParse(prefix, out var yr) && yr >= 2018 && yr <= DateTime.UtcNow.Year + 1)
-                    return prefix;
-            }
+
             return defaultYear;
         }
 

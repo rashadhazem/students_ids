@@ -3,7 +3,17 @@ import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { apiClient, API_BASE_URL } from '../api/client';
 import { PhotoCropperModal } from '../components/PhotoCropperModal';
+import { getAcademicLevelInfo } from '../components/StudentCard';
 import { BUA_COLLEGES, BUA_YEARS } from './RegisterStudentPage';
+
+export const BUA_YEARS_FILTER = [
+  { value: '2026', label: 'الفرقة الأولى (2026)' },
+  { value: '2025', label: 'الفرقة الثانية (2025)' },
+  { value: '2024', label: 'الفرقة الثالثة (2024)' },
+  { value: '2023', label: 'الفرقة الرابعة (2023)' },
+  { value: '2022', label: 'الفرقة الخامسة (2022)' },
+  { value: '2021', label: 'الفرقة السادسة (2021)' },
+];
 
 interface Student {
   id: number;
@@ -317,16 +327,16 @@ export const StudentsPage: React.FC = () => {
           </div>
 
           {/* Year Filter */}
-          <div className="w-40 text-right">
+          <div className="w-48 text-right">
             <label className="text-xs font-semibold text-muted block mb-1">السنة / الفرقة</label>
             <select
               value={selectedYear}
               onChange={(e) => setSelectedYear(e.target.value)}
               className="bua-select text-xs"
             >
-              <option value="">كل السنوات</option>
-              {BUA_YEARS.map((y) => (
-                <option key={y} value={y}>{y}</option>
+              <option value="">كل الفرق / السنوات</option>
+              {BUA_YEARS_FILTER.map((y) => (
+                <option key={y.value} value={y.value}>{y.label}</option>
               ))}
             </select>
           </div>
@@ -405,82 +415,97 @@ export const StudentsPage: React.FC = () => {
               <tr>
                 <th>الصورة</th>
                 <th>الاسم الكامل</th>
-                <th>البريد الإلكتروني</th>
-                <th>رقم التليفون</th>
+                <th>الرقم الجامعي</th>
+                <th>الفرقة الدراسية</th>
                 <th>الكلية</th>
+                <th>البريد والتليفون</th>
                 <th>إجراءات</th>
               </tr>
             </thead>
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={6} className="text-center py-12 text-muted font-tajawal">
+                  <td colSpan={7} className="text-center py-12 text-muted font-tajawal">
                     <div className="inline-block w-8 h-8 border-2 border-blue border-t-transparent rounded-full animate-spin mb-2" />
                     <div>جارٍ تحميل بيانات الطلاب…</div>
                   </td>
                 </tr>
               ) : students.length > 0 ? (
-                students.map((s) => (
-                  <tr key={s.id}>
-                    <td>
-                      <img
-                        src={getPhotoUrl(s.imagePath)}
-                        alt={s.fullName}
-                        className="student-thumb cursor-pointer hover:opacity-80 hover:ring-2 hover:ring-blue transition"
-                        title="انقر لتغيير أو اقتصاص الصورة"
-                        onClick={() => setCroppingStudent(s)}
-                        onError={(e) => {
-                          (e.target as HTMLImageElement).src = `${API_BASE_URL}/api/photos/placeholder`;
-                        }}
-                      />
-                    </td>
-                    <td className="font-bold text-navy">{s.fullName}</td>
-                    <td className="text-muted text-xs font-mono" dir="ltr">
-                      {s.email || '–'}
-                    </td>
-                    <td className="text-muted text-xs font-mono" dir="ltr">
-                      {s.mobile || '–'}
-                    </td>
-                    <td>
-                      <span className="college-tag">{s.college}</span>
-                    </td>
-                    <td>
-                      <div className="flex items-center gap-1.5 flex-wrap">
-                        <Link
-                          to={`/card?id=${s.studentId}`}
-                          className="bua-btn bua-btn-outline bua-btn-sm text-xs"
-                          title="عرض البطاقة"
-                        >
-                          بطاقة
-                        </Link>
-                        <button
-                          type="button"
+                students.map((s) => {
+                  const levelInfo = getAcademicLevelInfo(s.studentId, s.year);
+                  return (
+                    <tr key={s.id}>
+                      <td>
+                        <img
+                          src={getPhotoUrl(s.imagePath)}
+                          alt={s.fullName}
+                          className="student-thumb cursor-pointer hover:opacity-80 hover:ring-2 hover:ring-blue transition"
+                          title="انقر لتغيير أو اقتصاص الصورة"
                           onClick={() => setCroppingStudent(s)}
-                          className="bua-btn bua-btn-outline bua-btn-sm text-xs text-amber-600 hover:bg-amber-50"
-                          title="تعديل واقتصاص الصورة"
-                        >
-                          صورة
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => openEditModal(s)}
-                          className="bua-btn bua-btn-primary bua-btn-sm text-xs"
-                          title="تعديل"
-                        >
-                          تعديل
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => setDeletingStudent(s)}
-                          className="bua-btn bua-btn-danger bua-btn-sm text-xs"
-                          title="حذف"
-                        >
-                          حذف
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))
+                          onError={(e) => {
+                            (e.target as HTMLImageElement).src = `${API_BASE_URL}/api/photos/placeholder`;
+                          }}
+                        />
+                      </td>
+                      <td>
+                        <div className="font-bold text-navy">{s.fullName}</div>
+                        {s.section && (
+                          <div className="text-[11px] text-muted">{s.section}</div>
+                        )}
+                      </td>
+                      <td className="text-muted text-xs font-mono font-bold" dir="ltr">
+                        {s.studentId}
+                      </td>
+                      <td>
+                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-[rgba(26,58,107,0.08)] text-[#1a3a6b] border border-[rgba(26,58,107,0.18)] font-cairo">
+                          {levelInfo.name}
+                        </span>
+                      </td>
+                      <td>
+                        <span className="college-tag">{s.college}</span>
+                      </td>
+                      <td className="text-muted text-xs font-mono" dir="ltr">
+                        <div>{s.email || '–'}</div>
+                        <div className="text-[11px] text-slate-400">{s.mobile || s.phone || ''}</div>
+                      </td>
+                      <td>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <Link
+                            to={`/card?id=${s.studentId}`}
+                            className="bua-btn bua-btn-outline bua-btn-sm text-xs"
+                            title="عرض البطاقة"
+                          >
+                            بطاقة
+                          </Link>
+                          <button
+                            type="button"
+                            onClick={() => setCroppingStudent(s)}
+                            className="bua-btn bua-btn-outline bua-btn-sm text-xs text-amber-600 hover:bg-amber-50"
+                            title="تعديل واقتصاص الصورة"
+                          >
+                            صورة
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => openEditModal(s)}
+                            className="bua-btn bua-btn-primary bua-btn-sm text-xs"
+                            title="تعديل"
+                          >
+                            تعديل
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setDeletingStudent(s)}
+                            className="bua-btn bua-btn-danger bua-btn-sm text-xs"
+                            title="حذف"
+                          >
+                            حذف
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
               ) : (
                 <tr>
                   <td colSpan={7} className="text-center py-12 text-muted font-tajawal">

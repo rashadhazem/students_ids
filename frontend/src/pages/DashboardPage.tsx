@@ -9,6 +9,7 @@ interface DashboardStats {
   studentsWithoutPhotos: number;
   totalColleges: number;
   collegeDistribution: Array<{ college: string; count: number }>;
+  levelDistribution?: Array<{ level: string; count: number }>;
   recentStudents: Array<{
     id: number;
     studentId: string;
@@ -273,7 +274,50 @@ export const DashboardPage: React.FC = () => {
         </div>
       )}
 
-      {/* 5. Recent Students Section */}
+      {/* 5. ACADEMIC LEVEL DISTRIBUTION GRID */}
+      {stats?.levelDistribution && stats.levelDistribution.length > 0 && (
+        <div className="bua-card mb-6">
+          <div className="bua-card-header bg-[#fafbfd]">
+            <svg viewBox="0 0 24 24" className="w-4 h-4 fill-blue">
+              <path d="M5 13.18v4L12 21l7-3.82v-4L12 17l-7-3.82zM12 3L1 9l11 6 9-4.91V17h2V9L12 3z" />
+            </svg>
+            <h2>توزيع الطلاب حسب الفرق الدراسية (العام الجامعي 2025 / 2026)</h2>
+          </div>
+          <div className="p-4 sm:p-5">
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+              {stats.levelDistribution.map((item, index) => {
+                const total = stats.totalStudents || 1;
+                const pct = Math.round((item.count / total) * 100);
+                return (
+                  <div
+                    key={index}
+                    className="bg-gradient-to-b from-white to-slate-50 border border-[#dce3ef] hover:border-blue rounded-xl p-3.5 flex flex-col justify-between transition shadow-sm"
+                  >
+                    <div className="text-right mb-2">
+                      <div className="text-xs font-bold text-navy">{item.level}</div>
+                      <span className="text-[10px] text-muted font-tajawal">دفعة وسنة القيد</span>
+                    </div>
+                    <div>
+                      <div className="flex justify-between items-baseline mb-1.5">
+                        <span className="text-xs font-black text-blue font-mono">{item.count}</span>
+                        <span className="text-[10px] text-slate-500 font-mono">{pct}%</span>
+                      </div>
+                      <div className="w-full bg-slate-200 h-1.5 rounded-full overflow-hidden">
+                        <div
+                          className="bg-blue h-full rounded-full transition-all duration-500"
+                          style={{ width: `${pct}%` }}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 6. Recent Students Section */}
       <div className="bua-card mb-6">
         <div className="bua-card-header bg-[#fafbfd] justify-between">
           <div className="flex items-center gap-2">

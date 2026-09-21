@@ -170,6 +170,26 @@ export const RegisterStudentPage: React.FC = () => {
     } finally { setLoading(false); }
   };
 
+  const handleStudentIdChange = (val: string) => {
+    const clean = toEngDigits(val);
+    setStudentId(clean);
+    setErrorMsg(null);
+
+    // Auto-detect Academic Level from the first 4 digits based on 2026 = Level 1
+    if (clean.length >= 4) {
+      const yr = parseInt(clean.substring(0, 4), 10);
+      if (yr >= 2000 && yr <= 2099) {
+        const level = (2026 - yr) + 1;
+        if (level === 1) setYear('الفرقة الأولى');
+        else if (level === 2) setYear('الفرقة الثانية');
+        else if (level === 3) setYear('الفرقة الثالثة');
+        else if (level === 4) setYear('الفرقة الرابعة');
+        else if (level === 5) setYear('الفرقة الخامسة');
+        else if (level === 6) setYear('الفرقة السادسة');
+      }
+    }
+  };
+
   return (
     <div>
       <div className="flex justify-between items-center mb-6">
@@ -221,10 +241,10 @@ export const RegisterStudentPage: React.FC = () => {
               <div className="bua-field">
                 <label>الرقم الجامعي <span className="text-red-600">*</span><span className="text-[11px] text-slate-400 font-normal mr-1">(8-12 رقم)</span></label>
                 <input type="text" value={studentId}
-                  onChange={(e) => { setStudentId(toEngDigits(e.target.value)); setErrorMsg(null); }}
+                  onChange={(e) => handleStudentIdChange(e.target.value)}
                   placeholder="2026101001" className="bua-input text-sm text-left font-mono tracking-widest"
                   dir="ltr" maxLength={12} inputMode="numeric" required />
-                <p className="text-[11px] text-slate-400 mt-1 m-0 font-tajawal">مثال: 2026 + رمز الكلية + تسلسل الطالب</p>
+                <p className="text-[11px] text-slate-400 mt-1 m-0 font-tajawal">مثال: 2026 (الفرقة الأولى) / 2025 (الفرقة الثانية) + تسلسل الطالب</p>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">

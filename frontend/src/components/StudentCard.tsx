@@ -16,6 +16,33 @@ export interface StudentCardData {
   updatedAt?: string;
 }
 
+export const getAcademicLevelInfo = (studentId?: string, year?: string) => {
+  const sid = (studentId || '').trim();
+  if (sid.length >= 4) {
+    const yr = parseInt(sid.substring(0, 4), 10);
+    if (yr >= 2000 && yr <= 2099) {
+      const level = (2026 - yr) + 1;
+      switch (level) {
+        case 1: return { name: 'الفرقة الأولى', level: 1, year: '2026', en: '1st Year' };
+        case 2: return { name: 'الفرقة الثانية', level: 2, year: '2025', en: '2nd Year' };
+        case 3: return { name: 'الفرقة الثالثة', level: 3, year: '2024', en: '3rd Year' };
+        case 4: return { name: 'الفرقة الرابعة', level: 4, year: '2023', en: '4th Year' };
+        case 5: return { name: 'الفرقة الخامسة', level: 5, year: '2022', en: '5th Year' };
+        case 6: return { name: 'الفرقة السادسة', level: 6, year: '2021', en: '6th Year' };
+        default: return { name: `دفعة ${yr}`, level, year: `${yr}`, en: `Class of ${yr}` };
+      }
+    }
+  }
+  const y = (year || '').trim();
+  if (y.includes('أول') || y === '1' || y === '2026') return { name: 'الفرقة الأولى', level: 1, year: '2026', en: '1st Year' };
+  if (y.includes('ثان') || y === '2' || y === '2025') return { name: 'الفرقة الثانية', level: 2, year: '2025', en: '2nd Year' };
+  if (y.includes('ثالث') || y === '3' || y === '2024') return { name: 'الفرقة الثالثة', level: 3, year: '2024', en: '3rd Year' };
+  if (y.includes('رابع') || y === '4' || y === '2023') return { name: 'الفرقة الرابعة', level: 4, year: '2023', en: '4th Year' };
+  if (y.includes('خامس') || y === '5' || y === '2022') return { name: 'الفرقة الخامسة', level: 5, year: '2022', en: '5th Year' };
+  if (y.includes('سادس') || y === '6' || y === '2021') return { name: 'الفرقة السادسة', level: 6, year: '2021', en: '6th Year' };
+  return { name: y || 'الفرقة الأولى', level: 1, year: '2026', en: '1st Year' };
+};
+
 interface StudentCardProps {
   student: StudentCardData;
   canEdit?: boolean;
@@ -42,11 +69,13 @@ export const StudentCard: React.FC<StudentCardProps> = ({
     });
   }, [student.studentId]);
 
-  const displayYear = student.academicYear || student.year || '2024';
+  const levelInfo = React.useMemo(() => {
+    return getAcademicLevelInfo(student.studentId, student.academicYear || student.year);
+  }, [student.studentId, student.academicYear, student.year]);
 
   const getLinkedInShareUrl = () => {
     const shareText = encodeURIComponent(
-      `أنا مسجل رسمياً في جامعة بدر بأسيوط – ${student.college}! 🎓✨\nرقم الطالب: ${student.studentId}`
+      `أنا مسجل رسمياً في جامعة بدر بأسيوط – ${student.college} (${levelInfo.name})! 🎓✨\nرقم الطالب: ${student.studentId}`
     );
     const shareUrl = encodeURIComponent(window.location.href);
     return `https://www.linkedin.com/sharing/share-offsite/?url=${shareUrl}&summary=${shareText}`;
@@ -134,11 +163,11 @@ export const StudentCard: React.FC<StudentCardProps> = ({
 
         {/* Info Column */}
         <div className="flex-1 text-right min-w-0">
-          <div className="text-white text-base font-bold leading-tight mb-2.5 line-clamp-2">
+          <div className="text-white text-base font-bold leading-tight mb-2 line-clamp-2">
             {student.fullName}
           </div>
 
-          <div className="flex items-center gap-1.5 mb-2">
+          <div className="flex items-center gap-1.5 mb-1.5 flex-wrap">
             <svg viewBox="0 0 24 24" className="w-3.5 h-3.5 fill-gold2 flex-shrink-0 opacity-80">
               <path d="M12 3L1 9l11 6 9-4.91V17h2V9L12 3zM5 13.18v4L12 21l7-3.82v-4L12 17l-7-3.82z" />
             </svg>
@@ -147,7 +176,15 @@ export const StudentCard: React.FC<StudentCardProps> = ({
             </span>
           </div>
 
-          <div className="flex items-center gap-1.5 mb-2" dir="ltr">
+          {/* Academic Level Badge */}
+          <div className="mb-2">
+            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-md bg-[rgba(232,184,75,0.18)] border border-[rgba(232,184,75,0.4)] text-[#f3cf7a] text-[11px] font-bold font-tajawal">
+              <span>🎓</span>
+              <span>{levelInfo.name}</span>
+            </span>
+          </div>
+
+          <div className="flex items-center gap-1.5 mb-1.5" dir="ltr">
             <svg viewBox="0 0 24 24" className="w-3.5 h-3.5 fill-gold2 flex-shrink-0 opacity-80">
               <path d="M20 4H4c-1.1 0-1.99.9-1.99 2L2 18c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 4l-8 5-8-5V6l8 5 8-5v2z" />
             </svg>
@@ -192,8 +229,8 @@ export const StudentCard: React.FC<StudentCardProps> = ({
 
       {/* Card Validity Footer */}
       <div className="p-[14px_24px_18px] flex items-center justify-between relative z-10">
-        <span className="text-[11px] text-white/40 font-tajawal">
-          صالح للعام الدراسي <strong className="text-white/70 font-bold">{displayYear} / 2025</strong>
+        <span className="text-[11px] text-white/50 font-tajawal">
+          صالح للعام الجامعي: <strong className="text-gold2 font-bold font-mono">2025 / 2026</strong> · <span className="text-white/85 font-semibold">{levelInfo.name}</span>
         </span>
         <svg viewBox="0 0 24 24" className="w-7 h-7 fill-gold2 opacity-20">
           <path d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4z" />
