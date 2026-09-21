@@ -36,8 +36,9 @@ RUN if [ -f "ai/requirements.txt" ]; then \
         pip3 install --no-cache-dir --break-system-packages -r ai/requirements.txt; \
     fi
 
-# Ensure necessary directories and script permissions
+# Ensure necessary directories, strip CRLF line endings, and set script permissions
 RUN mkdir -p /app/wwwroot/uploads /app/data && \
+    sed -i 's/\r$//' /app/entrypoint.sh 2>/dev/null || true && \
     chmod +x /app/entrypoint.sh 2>/dev/null || true
 
 ENTRYPOINT ["/bin/bash", "/app/entrypoint.sh"]

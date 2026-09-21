@@ -1,17 +1,48 @@
 version: '3.8'
 
 services:
+  # 1. PostgreSQL Database Service (High-Performance Production DB)
+  postgres:
+    image: postgres:16-alpine
+    container_name: bua_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-bua_db}
+      POSTGRES_USER: ${POSTGRES_USER:-bua_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-bua_password}
+    volumes:
+      - bua_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-bua_user} -d ${POSTGRES_DB:-bua_db}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - bua_network
+
+  # 2. .NET 8 Backend API + Embedded AI YuNet Face Cropper
   backend:
     build:
       context: .
       dockerfile: Dockerfile.backend
     container_name: bua_backend
     restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
     environment:
       - ASPNETCORE_ENVIRONMENT=Production
-      - DatabaseProvider=Sqlite
+      - DatabaseProvider=Postgres
+      - ConnectionStrings__PostgresConnection=Host=postgres;Port=5432;Database=bua_db;Username=bua_user;Password=bua_password;Maximum Pool Size=100;
       - ConnectionStrings__DefaultConnection=Data Source=/app/data/bua_students.db
       - Jwt__SecretKey=BUA_Enterprise_Ultra_Secure_Secret_Key_2025_Long_Enough_256_Bits!
+      - EmailSettings__SmtpHost=smtp.gmail.com
+      - EmailSettings__SmtpPort=465
+      - EmailSettings__SenderEmail=student.affairs.bua@gmail.com
+      - EmailSettings__SenderName=جامعة بدر بأسيوط - شؤون الطلاب
+      - EmailSettings__SmtpUser=student.affairs.bua@gmail.com
+      - EmailSettings__SmtpPass=suvgaevbjjwkjcjc
+      - EmailSettings__EnableSsl=true
     volumes:
       - bua_data:/app/data
       - bua_uploads:/app/wwwroot/uploads
@@ -20,6 +51,7 @@ services:
     networks:
       - bua_network
 
+  # 3. React Frontend (Nginx Reverse Proxy & Static SPA)
   frontend:
     build:
       context: .
@@ -34,6 +66,7 @@ services:
       - bua_network
 
 volumes:
+  bua_pgdata:
   bua_data:
   bua_uploads:
 
